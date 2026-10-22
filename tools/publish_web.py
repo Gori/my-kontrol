@@ -3,6 +3,7 @@ web/firmware/<board>/ and records it as the newest release in
 web/firmware/manifest.json.
 
 usage: publish_web.py BOARD FIRMWARE.bin VERSION [NOTES]
+       WEB_ROOT=dir publish_web.py ...   (default: the repo's web/)
 """
 import hashlib
 import json
@@ -12,7 +13,7 @@ import sys
 
 board, binary, version = sys.argv[1:4]
 notes = sys.argv[4] if len(sys.argv) > 4 else ''
-root = os.path.join(os.path.dirname(__file__), '..', 'web')
+root = os.environ.get('WEB_ROOT') or os.path.join(os.path.dirname(__file__), '..', 'web')
 manifest_path = os.path.join(root, 'firmware', 'manifest.json')
 name = f'my-kontrol-{board}-{version}.bin'
 rel = f'firmware/{board}/{name}'
