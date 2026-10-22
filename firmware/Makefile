@@ -1,47 +1,56 @@
-# Dependencies: see lib/README
-CROSS  = arm-none-eabi-
-CC     = $(CROSS)gcc
-OBJCOPY = $(CROSS)objcopy
-SIZE   = $(CROSS)size
+# My Kontrol firmware.
+#   make                  release build for BOARD (default m32)
+#   make DEV=1            developer build: event injection over USB (tools/m32test.py)
+#   make BOARD=<name>     another keyboard, see docs/porting.md
+#   make test             host tests (no hardware)
+# Dependencies: git submodules in lib/ (git submodule update --init)
 
+BOARD ?= m32
+include boards/$(BOARD)/board.mk
+include platform/$(PLATFORM)/platform.mk
+
+BUILD  = build/$(BOARD)$(if $(DEV),-dev)
 TUSB   = lib/tinyusb/src
 
-SRCS = main.c usb.c display.c gfx.c ui.c app.c settings.c smartplay.c settings_store.c mcu.c input.c knobs.c i2c_bb.c leds.c touch.c strips.c pedal.c libc.c \
-       $(TUSB)/tusb.c \
-       $(TUSB)/common/tusb_fifo.c \
-       $(TUSB)/device/usbd.c \
-       $(TUSB)/class/dfu/dfu_rt_device.c \
-       $(TUSB)/class/midi/midi_device.c \
-       $(TUSB)/portable/st/stm32_fsdev/dcd_stm32_fsdev.c \
-       $(TUSB)/portable/st/stm32_fsdev/fsdev_common.c
+CORE_SRCS = $(wildcard core/*.c) usb/usb_device.c
+TUSB_SRCS = $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c \
+            $(TUSB)/class/dfu/dfu_rt_device.c $(TUSB)/class/midi/midi_device.c \
+            $(PLATFORM_TUSB_SRCS)
+SRCS = $(CORE_SRCS) $(BOARD_SRCS) $(PLATFORM_SRCS) $(TUSB_SRCS)
 
-CFLAGS = -mcpu=cortex-m3 -mthumb -Os -g -std=gnu11 \
-         -Wall -Wextra -Wno-missing-field-initializers -ffreestanding -fno-builtin -ffunction-sections -fdata-sections \
-         -DSTM32F103xB \
-         -I. -Ilibc -I$(TUSB) \
-         -Ilib/cmsis_device_f1/Include -Ilib/CMSIS_6/CMSIS/Core/Include \
-         $(EXTRA_CFLAGS)
-LDFLAGS = -nostdlib -T m32.ld -Wl,--gc-sections -Wl,-Map=build/m32.map
+VERSION := $(shell sed -n 's/.*MK_VERSION "\(.*\)"/\1/p' core/version.h)
 
-OBJS = $(patsubst %.c,build/%.o,$(notdir $(SRCS)))
-vpath %.c $(sort $(dir $(SRCS)))
+CFLAGS = $(PLATFORM_CFLAGS) -Os -g -std=gnu11 \
+         -Wall -Wextra -Wno-missing-field-initializers -ffreestanding -fno-builtin \
+         -ffunction-sections -fdata-sections \
+         -Icore -Iusb -Iboards/$(BOARD) -Iplatform/$(PLATFORM) $(PLATFORM_INCLUDES) -I$(TUSB) \
+         $(if $(DEV),-DMK_DEV) $(EXTRA_CFLAGS)
+LDFLAGS = -nostdlib -T boards/$(BOARD)/$(LDSCRIPT) -Wl,--gc-sections -Wl,-Map=$(BUILD)/firmware.map
 
-all: build/m32.bin
+OBJS = $(patsubst %.c,$(BUILD)/obj/%.o,$(SRCS))
+DEPS = $(OBJS:.o=.d)
+OUT  = $(BUILD)/my-kontrol-$(BOARD)-$(VERSION)$(if $(DEV),-dev)
 
-build/%.o: %.c tusb_config.h *.h | build
-	$(CC) $(CFLAGS) -c $< -o $@
+all: $(OUT).bin
 
-build/m32.elf: $(OBJS) m32.ld
+$(BUILD)/obj/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(OUT).elf: $(OBJS) boards/$(BOARD)/$(LDSCRIPT)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -lgcc -o $@
 	$(SIZE) $@
 
-build/m32.bin: build/m32.elf
+$(OUT).bin: $(OUT).elf
 	$(OBJCOPY) -O binary $< $@
+	@cp $@ $(BUILD)/firmware.bin
+	@echo "$@"
 
-build:
-	mkdir -p $@
+test:
+	$(MAKE) -C test
 
 clean:
 	rm -rf build
 
-.PHONY: all clean
+-include $(DEPS)
+.PHONY: all test clean

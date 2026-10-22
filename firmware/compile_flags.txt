@@ -1,0 +1,10 @@
+-std=gnu11
+-DSTM32F103xB
+-Icore
+-Iusb
+-Iboards/m32
+-Iplatform/stm32f1
+-Iplatform/stm32f1/libc
+-Ilib/tinyusb/src
+-Ilib/cmsis_device_f1/Include
+-Ilib/CMSIS_6/CMSIS/Core/Include

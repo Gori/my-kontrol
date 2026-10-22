@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Kontrol Installer</title>
+  <meta name="description" content="Install My Kontrol, open-source firmware for the Komplete Kontrol M32, or restore NI's firmware, from your browser.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='8' width='28' height='16' rx='3' fill='%23222'/%3E%3Crect x='6' y='12' width='9' height='5' rx='1' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to installer</a>
+  <header class="top">
+    <div class="wrap">
+      <p class="brand"><span class="brand-mark" aria-hidden="true"></span>My Kontrol Installer</p>
+      <p class="tagline">Open-source firmware for the Komplete Kontrol M32</p>
+    </div>
+  </header>
+
+  <main id="main" class="wrap">
+    <ol class="steps" id="steps" aria-label="Progress">
+      <li data-step="connect"><span class="num">1</span><span class="lbl">Connect</span></li>
+      <li data-step="choose"><span class="num">2</span><span class="lbl">Choose</span></li>
+      <li data-step="flash"><span class="num">3</span><span class="lbl">Install</span></li>
+      <li data-step="done"><span class="num">4</span><span class="lbl">Done</span></li>
+    </ol>
+
+    <section class="card" aria-label="Installer">
+      <div class="card-body">
+
+        <!-- Browser without WebUSB -->
+        <div id="view-unsupported" class="view" hidden>
+          <h1 id="card-title-unsupported" tabindex="-1">This browser can't talk to USB devices</h1>
+          <p>Installing firmware needs WebUSB, which only <strong>Chrome</strong>, <strong>Edge</strong> and <strong>Opera</strong> on a computer have.
+            Open this page in one of them. Safari and Firefox don't support it, and neither do phones.</p>
+          <p class="muted" id="unsupported-detail"></p>
+        </div>
+
+        <!-- Step 1 -->
+        <div id="view-connect" class="view" hidden>
+          <h1 tabindex="-1">Connect your keyboard</h1>
+          <ol class="prep">
+            <li>Plug the M32 into this computer with its USB cable, directly rather than through a hub.</li>
+            <li>Quit Komplete Kontrol, Native Access, your DAW and any other music app.</li>
+            <li>Click <b>Connect</b>, pick <b>Komplete Kontrol M32</b> in the list, then click <b>Connect</b> in that box.</li>
+          </ol>
+          <div class="actions">
+            <button type="button" class="btn primary" id="btn-connect">Connect</button>
+          </div>
+          <p class="note" id="connect-note" role="status" aria-live="polite"></p>
+        </div>
+
+        <!-- Step 2 -->
+        <div id="view-choose" class="view" hidden>
+          <h1 tabindex="-1">What do you want to install?</h1>
+          <div class="device" id="device-card">
+            <div class="oled" aria-hidden="true"><span id="oled-choose">M32</span></div>
+            <div>
+              <p class="device-name" id="device-name">Komplete Kontrol M32</p>
+              <p class="device-meta" id="device-meta"></p>
+            </div>
+          </div>
+          <p class="banner info" id="dfu-banner" hidden>Your keyboard is in update mode and waiting for firmware.
+            That's normal after an interrupted update. Pick something to install and it will start right away.</p>
+
+          <fieldset class="choices">
+            <legend class="sr-only">Firmware</legend>
+
+            <label class="choice" id="choice-mk">
+              <input type="radio" name="choice" value="mykontrol">
+              <span class="choice-body">
+                <span class="choice-title">Install My Kontrol <span class="tag" id="mk-version"></span></span>
+                <span class="choice-desc" id="mk-desc">Works on its own, no NI software needed. You can switch back to NI's firmware at any time.</span>
+              </span>
+            </label>
+            <div class="sub" id="sub-mk" hidden>
+              <div class="banner warn" id="mk-blocked" hidden>
+                <p id="mk-blocked-text"></p>
+                <p><a href="https://github.com/Gori/my-kontrol/issues">Open an issue on GitHub</a></p>
+                <button type="button" class="linkish" id="btn-mk-anyway">Install anyway (developers)</button>
+              </div>
+            </div>
+
+            <label class="choice">
+              <input type="radio" name="choice" value="stock">
+              <span class="choice-body">
+                <span class="choice-title">Restore NI firmware</span>
+                <span class="choice-desc">Puts back Native Instruments' original firmware, taken from NI's own updater.</span>
+              </span>
+            </label>
+            <div class="sub" id="sub-stock" hidden>
+              <p>Download the M32 firmware updater for <b>Mac</b> from Native Instruments (it's a zip such as
+                <code>KKM_FWUpdater_3.17.0_Mac.zip</code>; the Mac file works on any computer). Don't unzip it, just drop it here.
+                The firmware is read from the file on this computer and nothing is uploaded.</p>
+              <div class="drop" id="drop-stock" tabindex="0" role="button" aria-describedby="drop-stock-hint">
+                <span class="drop-main">Drop the updater zip here</span>
+                <span class="drop-hint" id="drop-stock-hint">or click to choose a file (.zip or NI .bin)</span>
+              </div>
+              <input type="file" id="file-stock" accept=".zip,.bin,application/zip,application/octet-stream" hidden>
+              <details class="advanced" id="stock-adv" hidden>
+                <summary>Advanced: choose the NI firmware type</summary>
+                <p class="muted">Each M32 hardware type needs its own NI firmware. The type is picked for you; change it only if you know your keyboard needs the other one.</p>
+                <div id="stock-types" role="radiogroup" aria-label="NI firmware type"></div>
+              </details>
+            </div>
+
+            <details class="advanced" id="advanced">
+              <summary>For developers</summary>
+              <label class="choice">
+                <input type="radio" name="choice" value="file">
+                <span class="choice-body">
+                  <span class="choice-title">Install from file</span>
+                  <span class="choice-desc">A .bin linked for 0x08003000, for example your own build.</span>
+                </span>
+              </label>
+              <div class="sub" id="sub-file" hidden>
+                <div class="drop" id="drop-file" tabindex="0" role="button">
+                  <span class="drop-main">Drop a .bin here</span>
+                  <span class="drop-hint">or click to choose a file</span>
+                </div>
+                <input type="file" id="file-custom" accept=".bin,application/octet-stream" hidden>
+              </div>
+            </details>
+          </fieldset>
+
+          <p class="image-status" id="image-status" role="status" aria-live="polite"></p>
+
+          <div class="actions">
+            <button type="button" class="btn primary" id="btn-install" disabled>Install</button>
+            <button type="button" class="btn ghost" id="btn-change">Use a different keyboard</button>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div id="view-flash" class="view" hidden>
+          <h1 tabindex="-1" id="flash-title">Installing</h1>
+          <p class="banner warn" id="flash-warn"><b>Don't unplug the keyboard or close this tab.</b></p>
+          <div class="device compact">
+            <div class="oled" aria-hidden="true"><span id="oled-flash"></span></div>
+            <p class="phase" id="flash-phase">Getting ready…</p>
+          </div>
+
+          <div class="continue" id="continue" hidden>
+            <p id="continue-text">The keyboard has restarted in update mode. Your browser needs your OK once more:
+              click <b>Continue</b>, pick <b>KOMPLETE KONTROL M32 DFU</b>, then click <b>Connect</b>.</p>
+            <div class="actions"><button type="button" class="btn primary" id="btn-continue">Continue</button></div>
+          </div>
+
+          <div class="progress-wrap" id="progress-wrap">
+            <div class="progress" id="progress" role="progressbar" aria-labelledby="flash-phase" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="bar" id="bar"></div>
+            </div>
+            <p class="progress-text" id="progress-text">&nbsp;</p>
+          </div>
+          <p class="sr-only" id="announce" aria-live="polite" aria-atomic="true"></p>
+        </div>
+
+        <!-- Step 4 -->
+        <div id="view-done" class="view" hidden>
+          <div class="done-icon" aria-hidden="true">
+            <svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25l7 7 13-15" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h1 tabindex="-1" id="done-title">Done</h1>
+          <p id="done-text"></p>
+          <p class="muted" id="done-sub"></p>
+          <div class="actions">
+            <button type="button" class="btn ghost" id="btn-again">Install something else</button>
+          </div>
+        </div>
+
+        <!-- Error -->
+        <div id="view-error" class="view" hidden role="alert">
+          <h1 tabindex="-1" id="err-title">Something went wrong</h1>
+          <p id="err-text"></p>
+          <ul class="tips" id="err-tips"></ul>
+          <div class="actions">
+            <button type="button" class="btn primary" id="btn-retry">Retry</button>
+            <button type="button" class="btn ghost" id="btn-restart">Start over</button>
+          </div>
+        </div>
+
+        <details class="log" id="log-wrap">
+          <summary>Technical details</summary>
+          <pre id="log" tabindex="0"></pre>
+          <button type="button" class="btn small ghost" id="btn-copy-log">Copy</button>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <p>Unofficial. My Kontrol is not made, endorsed or supported by Native Instruments. Komplete Kontrol is a trademark of Native Instruments.</p>
+      <p>Free software under GPL-3.0. Source, issues and help: <a href="https://github.com/Gori/my-kontrol">github.com/Gori/my-kontrol</a></p>
+      <p class="muted">NI's bootloader is never changed, so you can always restore NI's firmware.</p>
+    </div>
+  </footer>
+</body>
+</html>

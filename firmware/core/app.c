@@ -1,0 +1,720 @@
+/* Routes board events to Smart Play, the DAW links and the UI; owns the
+   button lights. Three ways to run:
+
+   LINK_NONE    no DAW: every button acts on the keyboard itself
+   LINK_MACKIE  a DAW speaks Mackie Control on the DAW port (Logic, Live, ...)
+   LINK_HOST    the My Kontrol script runs in the DAW (docs/protocol.md) */
+#include "app.h"
+#include "gfx.h"
+#include "host.h"
+#include "mcu.h"
+#include "midi.h"
+#include "play.h"
+#include "settings.h"
+#include "settings_store.h"
+#include "smartplay.h"
+#include "ui.h"
+
+static uint8_t shift, usb_up;
+static uint8_t knob_val[KNOB_PAGES][BOARD_KNOBS];
+static uint32_t now_ms, last_ms, idle_ms;
+static uint8_t screen_off;
+static uint8_t clock_port = 0xFF;          /* port the external clock arrives on */
+static uint32_t clock_seen_ms;
+static uint8_t tap_flash;                  /* tap tempo turned the Tempo light on */
+static uint32_t beat_ms;                   /* when the last DAW beat arrived */
+static uint16_t seen_beat_gen;
+static char seen_beats[2];
+
+static void daw_send(const uint8_t *b, uint16_t n)
+{
+    if (usb_up)
+        midi_send(PORT_DAW, b, n);
+}
+
+int app_link(void)
+{
+    if (settings.daw_mode == DAW_OFF)
+        return LINK_NONE;
+    if (host.connected)
+        return LINK_HOST;
+    if (mcu_connected)
+        return LINK_MACKIE;
+    return LINK_NONE;
+}
+
+int app_shift(void) { return shift; }
+uint8_t app_knob_value(int page, int knob) { return knob_val[page & (KNOB_PAGES - 1)][knob % BOARD_KNOBS]; }
+
+void app_settings_changed(void)
+{
+    settings_sanitize(&settings);
+    play_settings_changed();
+    board_display_contrast(settings.contrast);
+    settings_touch();
+    ui_invalidate();
+}
+
+void app_panic(void)
+{
+    play_panic();
+}
+
+void app_enter_bootloader(void)
+{
+    play_panic();
+    if (settings_pending())
+        settings_save_now();
+    /* show the update screen, then let USB send what is queued */
+    ui_render();
+    for (int p = 0; p < DISP_H / 8; p++)
+        board_display_page(p, &gfx_fb[p * DISP_W]);
+    hal_delay_ms(20);
+    hal_enter_bootloader();
+}
+
+void app_usb_mounted(int mounted)
+{
+    usb_up = mounted;
+    if (!mounted) {
+        mcu_reset();
+        host_usb_reset();
+    }
+}
+
+/* ---------- MIDI in ---------- */
+
+void app_midi_message(uint8_t port, uint8_t st, uint8_t d0, uint8_t d1)
+{
+    if (port == PORT_DAW) {
+        if ((st & 0x0F) == 0x0F && host.connected)
+            return;                         /* channel 16 is the host protocol's own */
+        switch (st & 0xF0) {
+        case 0x90: mcu_note(d0, d1); break;
+        case 0x80: mcu_note(d0, 0); break;
+        case 0xB0: mcu_cc(d0, d1); break;
+        }
+        return;
+    }
+    /* Keys port: knob CCs echoed back by the DAW keep the knobs in sync */
+    if ((st & 0xF0) == 0xB0 && (st & 0x0F) == play_channel())
+        for (int p = 0; p < KNOB_PAGES; p++)
+            for (int k = 0; k < BOARD_KNOBS; k++)
+                if (settings.knob_cc[p][k] == d0)
+                    knob_val[p][k] = d1;
+}
+
+void app_midi_sysex(uint8_t port, const uint8_t *m, uint16_t n)
+{
+    if (port != PORT_DAW)
+        return;
+    if (!host_sysex(m, n))
+        mcu_sysex(m, n);
+}
+
+void app_midi_realtime(uint8_t port, uint8_t b)
+{
+    /* follow one source: a DAW may send clock to both ports */
+    if (clock_port != port && now_ms - clock_seen_ms < 1000)
+        return;
+    if (b == 0xF8) {
+        clock_port = port;
+        clock_seen_ms = now_ms;
+    }
+    switch (b) {
+    case 0xF8: sp_midi_clock(); break;
+    case 0xFA: sp_midi_start(); break;
+    case 0xFB: sp_midi_continue(); break;
+    case 0xFC: sp_midi_stop(); break;
+    }
+}
+
+/* ---------- knobs ---------- */
+
+static void knob_turned(uint8_t k, int d)
+{
+    int link = app_link();
+    if (link != LINK_NONE && settings.knob_mode == KNOBS_DAW) {
+        if (link == LINK_HOST)
+            host_knob(k, d);
+        else
+            mcu_vpot(k, d);
+        ui_focus_knob(k);
+        return;
+    }
+    uint8_t *v = &knob_val[settings.knob_page][k];
+    int x = *v + d;
+    x = x < 0 ? 0 : x > 127 ? 127 : x;
+    if (x == *v)
+        return;
+    *v = x;
+    midi_send3(PORT_KEYS, 0xB0 | play_channel(), settings.knob_cc[settings.knob_page][k], x);
+    ui_focus_knob(k);
+}
+
+static void knob_touched(uint8_t k, int touched)
+{
+    int link = app_link();
+    if (link == LINK_HOST && settings.knob_mode == KNOBS_DAW)
+        host_knob_touch(k, touched);
+    if (touched)
+        ui_focus_knob(k);
+}
+
+/* ---------- buttons ---------- */
+
+/* Mackie Control keys with their Shift variants */
+static const struct { uint8_t ctl, mcu, mcu_shift; } mcu_keys[] = {
+    {CTL_UNDO,        MCU_UNDO,          MCU_UNDO},        /* Shift = redo: MCU Shift held */
+    {CTL_QUANTIZE,    MCU_F1,            MCU_F1 + 4},
+    {CTL_IDEAS,       MCU_F1 + 1,        MCU_F1 + 5},
+    {CTL_LOOP,        MCU_CYCLE,         MCU_CYCLE},
+    {CTL_METRO,       MCU_CLICK,         MCU_CLICK},
+    {CTL_PLAY,        MCU_PLAY,          MCU_REWIND},      /* Shift = back to start */
+    {CTL_REC,         MCU_RECORD,        MCU_RECORD},
+    {CTL_STOP,        MCU_STOP,          MCU_STOP},
+    {CTL_PRESET_UP,   MCU_UP,            MCU_BANK_LEFT},
+    {CTL_PRESET_DOWN, MCU_DOWN,          MCU_BANK_RIGHT},
+    {CTL_MUTE,        MCU_MUTE,          MCU_MUTE},        /* strip 1 of the bank */
+    {CTL_SOLO,        MCU_SOLO,          MCU_SOLO},
+    {CTL_PLUGIN,      MCU_ASSIGN_PLUGIN, MCU_ASSIGN_INSTR},
+    {CTL_TRACK,       MCU_ASSIGN_PAN,    MCU_ASSIGN_SEND},
+    {CTL_NAV_UP,      MCU_UP,            MCU_UP},
+    {CTL_NAV_DOWN,    MCU_DOWN,          MCU_DOWN},
+    {CTL_NAV_LEFT,    MCU_LEFT,          MCU_BANK_LEFT},
+    {CTL_NAV_RIGHT,   MCU_RIGHT,         MCU_BANK_RIGHT},
+    {CTL_NAV_PUSH,    MCU_ENTER,         MCU_ENTER},
+};
+#define MCU_KEYS (sizeof mcu_keys / sizeof mcu_keys[0])
+static uint8_t mcu_sent[MCU_KEYS];        /* note sent on press, released on release */
+
+static int mackie_button(uint8_t ctl, int down)
+{
+    for (unsigned i = 0; i < MCU_KEYS; i++) {
+        if (mcu_keys[i].ctl != ctl)
+            continue;
+        if (down) {
+            uint8_t note = shift ? mcu_keys[i].mcu_shift : mcu_keys[i].mcu;
+            mcu_sent[i] = note | (shift && ctl == CTL_UNDO ? 0x80 : 0);
+            if (mcu_sent[i] & 0x80)
+                mcu_button(MCU_SHIFT, 1);
+            mcu_button(note, 1);
+        } else if (mcu_sent[i]) {
+            mcu_button(mcu_sent[i] & 0x7F, 0);
+            if (mcu_sent[i] & 0x80)
+                mcu_button(MCU_SHIFT, 0);
+            mcu_sent[i] = 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void notify_int(const char *title, int v, int sign)
+{
+    char b[8];
+    char *p = b;
+    int u = v < 0 ? -v : v;
+    if (v < 0) *p++ = '-';
+    else if (sign && v > 0) *p++ = '+';
+    if (u >= 100) *p++ = '0' + u / 100;
+    if (u >= 10) *p++ = '0' + u / 10 % 10;
+    *p++ = '0' + u % 10;
+    *p = 0;
+    ui_notify(title, b);
+}
+
+static uint32_t taps[4];
+static uint8_t tap_n;
+
+static void tap_tempo(void)
+{
+    if (tap_n && now_ms - taps[(tap_n - 1) & 3] > 2000)
+        tap_n = 0;                          /* a pause starts a new measurement */
+    taps[tap_n & 3] = now_ms;
+    tap_n++;
+    tap_flash = 1;
+    if (tap_n < 2) {
+        ui_notify("Tap Tempo", "...");
+        return;
+    }
+    int n = tap_n < 4 ? tap_n : 4;
+    uint32_t interval = (now_ms - taps[(tap_n - n) & 3]) / (n - 1);
+    if (interval < 250 || interval > 1500)  /* 40..240 BPM, the menu's range */
+        return;
+    settings.sp.bpm_x10 = (600000 + interval / 2) / interval;
+    char v[8];
+    int b = settings.sp.bpm_x10;
+    char *p = v;
+    if (b >= 1000) *p++ = '0' + b / 1000;
+    *p++ = '0' + b / 100 % 10;
+    *p++ = '0' + b / 10 % 10;
+    *p++ = '.';
+    *p++ = '0' + b % 10;
+    *p = 0;
+    ui_notify(settings.sp.ext_clock ? "Tempo (ext clock)" : "Tempo", v);
+    app_settings_changed();
+}
+
+static uint8_t oct_held[2], oct_combo;
+
+static void octave_button(int up, int down)
+{
+    oct_held[up] = down;
+    if (!down) {
+        if (!oct_held[0] && !oct_held[1])
+            oct_combo = 0;
+        return;
+    }
+    if (oct_held[!up]) {                    /* both: back to the middle, all notes off */
+        oct_combo = 1;
+        settings.octave = settings.transpose = 0;
+        play_panic();
+        ui_notify("Octave & Transpose", "Reset");
+        app_settings_changed();
+        return;
+    }
+    if (shift && !up) {
+        if (settings.vel_curve == VEL_FIXED) {
+            settings.vel_curve = settings.vel_curve_prev;
+        } else {
+            settings.vel_curve_prev = settings.vel_curve;
+            settings.vel_curve = VEL_FIXED;
+        }
+        ui_notify("Fixed Velocity", settings.vel_curve == VEL_FIXED ? "On" : "Off");
+        app_settings_changed();
+        return;
+    }
+    if (shift && up) {
+        settings.split_on = !settings.split_on;
+        ui_notify("Split", settings.split_on ? "On" : "Off");
+        app_settings_changed();
+        return;
+    }
+    int o = settings.octave + (up ? 1 : -1);
+    if (o < -3 || o > 3)
+        return;
+    settings.octave = o;
+    notify_int("Octave", o, 1);
+    app_settings_changed();
+}
+
+/* No DAW: Quantize = note repeat (tap toggles, hold is momentary),
+   Ideas = chord memory (hold Ideas and play a chord to learn it, tap toggles) */
+static uint32_t repeat_down_ms, ideas_down_ms;
+static uint8_t repeat_was_on, learning;
+
+int app_learning(void) { return learning; }
+
+static const char *chord_name(void)
+{
+    static const struct { uint8_t n; int8_t iv[5]; const char *name; } names[] = {
+        {3, {0, 4, 7}, "Major"}, {3, {0, 3, 7}, "Minor"}, {3, {0, 3, 6}, "Dim"},
+        {3, {0, 4, 8}, "Aug"}, {3, {0, 2, 7}, "Sus2"}, {3, {0, 5, 7}, "Sus4"},
+        {4, {0, 4, 7, 11}, "Maj7"}, {4, {0, 3, 7, 10}, "Min7"}, {4, {0, 4, 7, 10}, "Dom7"},
+        {4, {0, 3, 6, 10}, "Min7b5"}, {4, {0, 3, 6, 9}, "Dim7"}, {2, {0, 7}, "Power"},
+        {4, {0, 4, 7, 9}, "Maj6"}, {4, {0, 3, 7, 9}, "Min6"}, {4, {0, 4, 7, 14}, "Add9"},
+    };
+    const sp_config_t *c = &settings.sp;
+    for (unsigned i = 0; i < sizeof names / sizeof names[0]; i++) {
+        if (names[i].n != c->chord_mem_n)
+            continue;
+        int ok = 1;
+        for (int k = 0; k < c->chord_mem_n; k++)
+            ok &= names[i].iv[k] == c->chord_mem[k];
+        if (ok)
+            return names[i].name;
+    }
+    static char b[10] = "0 Notes";
+    b[0] = '0' + c->chord_mem_n;
+    return b;
+}
+
+void app_learn_chord(void)
+{
+    if (sp_learn_chord() == 0) {
+        settings.sp.chord = CHORD_MEMORY;
+        ui_notify("Chord Learned", chord_name());
+        app_settings_changed();
+    } else {
+        ui_notify("Learn Chord", "Hold 2+ keys");
+    }
+}
+
+static void local_button(uint8_t ctl, int down)
+{
+    switch (ctl) {
+    case CTL_QUANTIZE:
+        if (down) {
+            repeat_down_ms = now_ms;
+            repeat_was_on = settings.sp.repeat_on;
+            settings.sp.repeat_on = !repeat_was_on;
+            ui_notify("Note Repeat", settings.sp.repeat_on ? sp_arp_rate_names[settings.sp.arp_rate] : "Off");
+            app_settings_changed();
+        } else if (!repeat_was_on && settings.sp.repeat_on && now_ms - repeat_down_ms > 400) {
+            settings.sp.repeat_on = 0;      /* held: momentary */
+            app_settings_changed();
+        }
+        return;
+    case CTL_IDEAS:
+        if (down) {
+            ideas_down_ms = now_ms;
+            learning = 1;
+            ui_notify("Learn Chord", "Play a chord");
+        } else if (learning) {
+            learning = 0;
+            if (sp_held_count() >= 2) {
+                app_learn_chord();
+            } else if (now_ms - ideas_down_ms < 400) {
+                settings.sp.chord = settings.sp.chord == CHORD_MEMORY ? CHORD_OFF : CHORD_MEMORY;
+                ui_notify("Chord Memory", settings.sp.chord == CHORD_MEMORY ? chord_name() : "Off");
+                app_settings_changed();
+            }
+        }
+        return;
+    case CTL_PRESET_UP:
+    case CTL_PRESET_DOWN:
+        if (down) {
+            settings.knob_page = (settings.knob_page + (ctl == CTL_PRESET_UP ? 1 : KNOB_PAGES - 1)) % KNOB_PAGES;
+            notify_int("Knob Page", settings.knob_page + 1, 0);
+            app_settings_changed();
+        }
+        return;
+    case CTL_PLAY:
+    case CTL_STOP:
+        /* with Clock Out on, Play / Stop start and stop whatever follows us */
+        if (down && settings.clock_out && !settings.sp.ext_clock) {
+            uint8_t b = ctl == CTL_PLAY ? 0xFA : 0xFC;
+            midi_send(PORT_KEYS, &b, 1);
+            ui_notify("MIDI Clock", ctl == CTL_PLAY ? "Start" : "Stop");
+        }
+        return;
+    case CTL_NAV_LEFT:
+    case CTL_NAV_RIGHT:
+        if (down) {
+            int t = settings.transpose + (ctl == CTL_NAV_RIGHT ? 1 : -1);
+            if (t >= -12 && t <= 12) {
+                settings.transpose = t;
+                notify_int("Transpose", t, 1);
+                app_settings_changed();
+            }
+        }
+        return;
+    case CTL_NAV_UP:
+    case CTL_NAV_DOWN:
+        if (down)
+            ui_home_step(ctl == CTL_NAV_DOWN ? 1 : -1);
+        return;
+    case CTL_NAV_PUSH:
+        if (down)
+            ui_toggle_menu();
+        return;
+    }
+}
+
+static int is_nav(uint8_t ctl)
+{
+    return ctl >= CTL_NAV_UP && ctl <= CTL_NAV_PUSH;
+}
+
+static void button(uint8_t ctl, int down)
+{
+    int link = app_link();
+    if (ctl == CTL_SHIFT) {
+        shift = down;
+        if (link == LINK_HOST)
+            host_button(ctl, down);
+        return;
+    }
+    if (ctl == CTL_PEDAL_PLUG) {
+        if (!down)
+            play_pedal_unplugged();
+        return;
+    }
+
+    /* the menu owns the 4D controls while it is open */
+    if (is_nav(ctl) && ui_menu_open()) {
+        static const uint8_t map[] = {UI_UP, UI_LEFT, UI_RIGHT, UI_DOWN, UI_PUSH};
+        if (down)
+            ui_input(map[ctl - CTL_NAV_UP], 0);
+        return;
+    }
+
+    /* always on the keyboard itself */
+    switch (ctl) {
+    case CTL_SCALE:
+        if (!down) return;
+        if (shift) {
+            ui_open_menu(UI_MENU_SCALE);
+        } else {
+            static uint8_t last_mode = SCALE_QUANTIZE;
+            if (settings.sp.scale_mode != SCALE_OFF) {
+                last_mode = settings.sp.scale_mode;
+                settings.sp.scale_mode = SCALE_OFF;
+            } else {
+                settings.sp.scale_mode = last_mode;
+            }
+            ui_notify("Scale", settings.sp.scale_mode == SCALE_OFF ? "Off" :
+                      settings.sp.scale_mode == SCALE_EASY ? "Easy" : "On");
+            app_settings_changed();
+        }
+        return;
+    case CTL_ARP:
+        if (!down) return;
+        if (shift) {
+            ui_open_menu(UI_MENU_ARP);
+        } else {
+            settings.sp.arp_on = !settings.sp.arp_on;
+            ui_notify("Arpeggiator", settings.sp.arp_on ? "On" : "Off");
+            app_settings_changed();
+        }
+        return;
+    case CTL_OCT_DOWN:
+    case CTL_OCT_UP:
+        octave_button(ctl == CTL_OCT_UP, down);
+        return;
+    case CTL_BROWSER:
+        if (down && (shift || link != LINK_HOST)) {
+            ui_toggle_menu();
+            return;
+        }
+        break;
+    case CTL_TEMPO:
+        if (link == LINK_HOST)
+            break;
+        if (down) {
+            if (shift) {
+                tap_flash = 0;
+                tap_n = 0;
+                ui_notify("Tempo Light", "Off");
+            } else {
+                tap_tempo();
+            }
+        }
+        return;
+    }
+
+    switch (link) {
+    case LINK_HOST:
+        if (ctl == CTL_PLUGIN || ctl == CTL_TRACK || ctl == CTL_BROWSER) {
+            if (down) {
+                static const char *const names[] = {"Device", "Mixer", "Clips"};
+                uint8_t v = ctl == CTL_PLUGIN ? VIEW_DEVICE : ctl == CTL_TRACK ? VIEW_MIXER : VIEW_CLIPS;
+                host_set_view(v);
+                ui_notify("View", names[v]);
+            }
+            return;
+        }
+        host_button(ctl, down);
+        return;
+    case LINK_MACKIE:
+        mackie_button(ctl, down);
+        return;
+    default:
+        local_button(ctl, down);
+        return;
+    }
+}
+
+static void encoder(int d)
+{
+    if (ui_menu_open()) {
+        ui_input(UI_TURN, d);
+        return;
+    }
+    switch (app_link()) {
+    case LINK_HOST: host_encoder(d); break;
+    case LINK_MACKIE: mcu_jog(d); break;
+    default: ui_home_step(d); break;
+    }
+}
+
+void app_event(const mk_event_t *ev)
+{
+    idle_ms = 0;
+    if (screen_off) {
+        screen_off = 0;
+        board_display_power(1);
+        ui_invalidate();
+    }
+    switch (ev->type) {
+    case EV_KEY:
+        play_key(ev->id, ev->value, ev->value != 0);
+        break;
+    case EV_BUTTON:
+        button(ev->id, ev->value);
+        break;
+    case EV_ENCODER:
+        encoder(ev->value);
+        break;
+    case EV_KNOB:
+        knob_turned(ev->id, ev->value);
+        break;
+    case EV_KNOB_TOUCH:
+        knob_touched(ev->id, ev->value);
+        break;
+    case EV_STRIP:
+        play_strip(ev->id, ev->value);
+        break;
+    case EV_PEDAL:
+        play_pedal(ev->id, ev->value);
+        break;
+    }
+}
+
+/* ---------- lights ---------- */
+
+static int tempo_flash_on(int link)
+{
+    if (settings.tempo_light == TEMPO_LIGHT_OFF)
+        return 0;
+    int auto_on = settings.tempo_light == TEMPO_LIGHT_ALWAYS || tap_flash;
+    /* a DAW beat wins: the light follows the song */
+    if (link == LINK_HOST && (host.transport & HOST_TF_PLAYING))
+        return now_ms - beat_ms < 70;
+    if (link == LINK_MACKIE && now_ms - beat_ms < 1500)
+        return now_ms - beat_ms < 70;
+    if (settings.sp.ext_clock) {
+        if (!sp_clock_alive())
+            return 0;
+        auto_on = 1;
+    }
+    if (sp_engine_playing())
+        auto_on = 1;
+    return auto_on && sp_beat_tick() < 3;
+}
+
+static void track_beats(int link)
+{
+    if (link == LINK_HOST && host.beat_gen != seen_beat_gen) {
+        seen_beat_gen = host.beat_gen;
+        beat_ms = now_ms;
+    }
+    /* Mackie: the beats digits of the timecode tick over on every beat */
+    if (link == LINK_MACKIE && mcu_led[MCU_LED_BEATS]) {
+        if (mcu_timecode[3] != seen_beats[0] || mcu_timecode[4] != seen_beats[1]) {
+            seen_beats[0] = mcu_timecode[3];
+            seen_beats[1] = mcu_timecode[4];
+            beat_ms = now_ms;
+        }
+    }
+}
+
+static uint8_t host_level(uint8_t state, uint8_t dim, int blink)
+{
+    switch (state) {
+    case 1: return dim;
+    case 2: return 255;
+    case 3: return blink ? 255 : dim;
+    default: return 0;
+    }
+}
+
+static void update_lights(void)
+{
+    static uint8_t level[CTL_COUNT];
+    int link = app_link(), blink = (now_ms / 250) & 1;
+    uint8_t dim = settings.led_dim, on = 255;
+    for (int i = 0; i < CTL_COUNT; i++)
+        level[i] = 0;
+
+    level[CTL_SHIFT] = shift ? on : dim;
+    level[CTL_SCALE] = settings.sp.scale_mode ? on : dim;
+    level[CTL_ARP] = settings.sp.arp_on ? on : dim;
+    level[CTL_OCT_DOWN] = settings.octave < 0 ? on : dim;
+    level[CTL_OCT_UP] = settings.octave > 0 ? on : dim;
+    level[CTL_BROWSER] = ui_menu_open() ? on : dim;
+    track_beats(link);
+    level[CTL_TEMPO] = tempo_flash_on(link) ? on : dim;
+
+    switch (link) {
+    case LINK_NONE:
+        level[CTL_QUANTIZE] = settings.sp.repeat_on ? on : dim;
+        level[CTL_IDEAS] = learning ? (blink ? on : dim) : settings.sp.chord == CHORD_MEMORY ? on : dim;
+        level[CTL_PRESET_UP] = level[CTL_PRESET_DOWN] = dim;
+        if (settings.clock_out && !settings.sp.ext_clock)
+            level[CTL_PLAY] = level[CTL_STOP] = dim;
+        break;
+    case LINK_MACKIE: {
+        static const uint8_t mirror[][2] = {
+            {CTL_LOOP, MCU_CYCLE}, {CTL_METRO, MCU_CLICK}, {CTL_PLAY, MCU_PLAY},
+            {CTL_REC, MCU_RECORD}, {CTL_STOP, MCU_STOP}, {CTL_MUTE, MCU_MUTE},
+            {CTL_SOLO, MCU_SOLO}, {CTL_PLUGIN, MCU_ASSIGN_PLUGIN}, {CTL_TRACK, MCU_ASSIGN_PAN},
+        };
+        for (unsigned i = 0; i < sizeof mirror / sizeof mirror[0]; i++) {
+            uint8_t s = mcu_led[mirror[i][1]];
+            level[mirror[i][0]] = s == 2 || (s == 1 && blink) ? on : dim;
+        }
+        level[CTL_UNDO] = level[CTL_QUANTIZE] = level[CTL_IDEAS] = dim;
+        level[CTL_PRESET_UP] = level[CTL_PRESET_DOWN] = dim;
+        break;
+    }
+    case LINK_HOST:
+        for (int c = 0; c < CTL_COUNT; c++)
+            if (c != CTL_SHIFT && c != CTL_SCALE && c != CTL_ARP && c != CTL_OCT_DOWN &&
+                c != CTL_OCT_UP && c != CTL_TEMPO && c != CTL_BROWSER)
+                level[c] = host_level(host.light[c], dim, blink);
+        if (host.light[CTL_TEMPO])
+            level[CTL_TEMPO] = host_level(host.light[CTL_TEMPO], dim, blink) | level[CTL_TEMPO];
+        level[CTL_PLUGIN] = host.view == VIEW_DEVICE ? on : dim;
+        level[CTL_TRACK] = host.view == VIEW_MIXER ? on : dim;
+        level[CTL_BROWSER] = ui_menu_open() || host.view == VIEW_CLIPS ? on : dim;
+        break;
+    }
+    for (int i = 0; i < CTL_COUNT; i++)
+        board_light(i, level[i]);
+    board_lights_flush();
+}
+
+/* ---------- main loop ---------- */
+
+void app_init(void)
+{
+    settings_load();
+    board_display_contrast(settings.contrast);
+    play_init();
+    mcu_init(daw_send);
+    host_init(daw_send, ui_notify);
+    ui_init();
+    now_ms = last_ms = hal_ms();
+}
+
+static void screensaver(uint32_t dt)
+{
+    uint32_t min = settings_screensaver_min[settings.screensaver];
+    if (play_keys_down() || sp_engine_playing())
+        idle_ms = 0;
+    idle_ms += dt;
+    if (!screen_off && min && idle_ms >= min * 60000u) {
+        screen_off = 1;
+        board_display_power(0);
+    }
+}
+
+void app_poll(void)
+{
+    now_ms = hal_ms();
+    uint32_t dt = now_ms - last_ms;
+    if (!dt)
+        return;
+    last_ms = now_ms;
+
+    int ticks = sp_tick_us(dt * 1000);
+    if (settings.clock_out && usb_up)
+        for (int i = 0; i < ticks; i++) {
+            uint8_t b = 0xF8;
+            midi_send(PORT_KEYS, &b, 1);
+        }
+    play_tick_ms(dt);
+    ui_tick_ms(dt);
+    host_tick_ms(dt);
+    settings_tick_ms(dt, !play_keys_down() && !sp_engine_playing());
+    screensaver(dt);
+
+    static uint32_t light_acc;
+    light_acc += dt;
+    if (light_acc >= 10) {
+        light_acc = 0;
+        update_lights();
+    }
+}

@@ -12,3 +12,5 @@ re/proj/
 re/*decomp*
 re/logs/
 *.zip
+firmware/test/out/
+node_modules/

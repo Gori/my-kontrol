@@ -1,6 +1,7 @@
 """Convert monospace BDF fonts (ASCII 32..126) to a C header.
 
-Glyphs are stored row by row, one byte per row, MSB = leftmost pixel.
+Glyphs are stored row by row, ceil(width / 8) bytes per row, MSB of the
+first byte = leftmost pixel.
 usage: bdf2c.py out.h name=font.bdf [name=font.bdf ...]
 """
 import sys
@@ -26,7 +27,7 @@ def load(path):
                     for ln in lines:
                         if ln == 'ENDCHAR':
                             break
-                        rows.append(int(ln, 16) >> (len(ln) * 4 - 8) if len(ln) > 2 else int(ln, 16))
+                        rows.append((int(ln, 16), len(ln) * 4))
                     glyphs[enc] = (bbx, rows)
                     break
     return fbb, glyphs
@@ -35,11 +36,18 @@ def load(path):
 def cell(fbb, bbx, rows):
     fw, fh, fx, fy = fbb
     w, h, x, y = bbx
-    out = [0] * fh
+    bpr = (fw + 7) // 8
+    bits = bpr * 8
+    out = []
     top = (fh + fy) - (h + y)          # rows from cell top to glyph top
-    for i, r in enumerate(rows):
+    grid = [0] * fh
+    for i, (v, n) in enumerate(rows):
         if 0 <= top + i < fh:
-            out[top + i] = (r >> (x - fx)) & 0xFF if x >= fx else (r << (fx - x)) & 0xFF
+            v = v << (bits - n) if n < bits else v >> (n - bits)   # left-align in the cell row
+            v = v >> (x - fx) if x >= fx else v << (fx - x)
+            grid[top + i] = v & ((1 << bits) - 1)
+    for v in grid:
+        out += [(v >> (8 * (bpr - 1 - b))) & 0xFF for b in range(bpr)]
     return out
 
 
@@ -51,9 +59,10 @@ for spec in sys.argv[2:]:
     fbb, glyphs = load(path)
     data = []
     for c in range(FIRST, LAST + 1):
-        data += cell(fbb, *glyphs[c]) if c in glyphs else [0] * fbb[1]
+        g = (fbb[0] + 7) // 8 * fbb[1]
+        data += cell(fbb, *glyphs[c]) if c in glyphs else [0] * g
     out.write(f'static const uint8_t {name}_data[] = {{\n')
-    for i in range(0, len(data), fbb[1]):
-        out.write('    ' + ', '.join(f'0x{v:02x}' for v in data[i:i + fbb[1]]) + f',  /* {chr(FIRST + i // fbb[1])!r} */\n')
+    for i in range(0, len(data), g):
+        out.write('    ' + ', '.join(f'0x{v:02x}' for v in data[i:i + g]) + f',  /* {chr(FIRST + i // g)!r} */\n')
     out.write(f'}};\n/* {name}: {fbb[0]}x{fbb[1]}, chars {FIRST}..{LAST} */\n\n')
 print('ok')
