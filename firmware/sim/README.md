@@ -90,6 +90,10 @@ Start `mk-sim` before the DAW, or rescan MIDI ports in the DAW.
 
 The ports have fixed unique IDs, so a DAW finds them again on the next run.
 
+Set the ports in the DAW's own settings, not with `defaults write`. A
+running app doesn't see an outside edit to its preferences, and writes its
+own copy back over it.
+
 ## mk-probe
 
 A minimal host in one C file (`probe.c`) and an example of the handshake. It
