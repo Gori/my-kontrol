@@ -206,7 +206,10 @@ class LiveGlue(unittest.TestCase):
 
     def test_lifecycle_through_real_framework(self):
         surface, c, song = self.make()
-        self.assertEqual(c.sent, [p.hello()])
+        self.assertEqual(len(c.sent), 1)
+        hello = p.parse_host(c.sent[0])
+        self.assertEqual((hello.proto, hello.name), (p.PROTOCOL_V2, "Ableton Live"))
+        self.assertTrue(hello.features & p.FEATURE_LISTS)
         self.assertTrue(song.current_song_time_has_listener(surface._on_song_time))
 
         _MidiMap.forwarded[:] = []
@@ -254,6 +257,28 @@ class LiveGlue(unittest.TestCase):
         self.assertEqual(c.sent[-1], p.bye())
         self.assertFalse(song.current_song_time_has_listener(surface._on_song_time))
         self.assertEqual(c.highlights[-1], (-1, -1, -1, -1, False))
+
+    def test_v2_lifecycle_through_real_framework(self):
+        surface, c, song = self.make()
+        self.assertTrue(song.root_note_has_listener(surface._on_song_state))
+        surface.receive_midi(p.hi())
+        surface.receive_midi(p.ident(proto=p.PROTOCOL_V2, view=p.VIEW_VOLUME))
+        self.assertEqual(p.parse_host(c.sent[-1]).__class__, p.Modes)
+        surface.receive_midi(p.view(p.VIEW_VOLUME))
+        for _ in range(5):
+            self.clock.advance(0.1)
+            surface.update_display()
+        screen = Screen()
+        for m in c.sent:
+            screen.feed(m)
+        self.assertEqual((screen.page.subtitle, screen.slots[0].name), ("Tracks 1-5", "Track 1"))
+        song.scale_mode, song.root_note = True, 4
+        song._listeners["root_note"][0]()
+        screen.feed(c.sent[-1])
+        self.assertEqual((screen.scale.state, screen.scale.root), (p.SCALE_SONG, 4))
+        self.assertEqual([m for m in c.log if "error" in m], [])
+        surface.disconnect()
+        self.assertFalse(song.root_note_has_listener(surface._on_song_state))
 
 
 if __name__ == "__main__":

@@ -7,12 +7,17 @@
 # and draws its part of the display. Rendering is "immediate mode": render()
 # writes every field the view owns, every time, and the outbox drops what the
 # device already shows. That keeps views free of listener bookkeeping.
+#
+# `mode` is the view's mode ID (VIEW / MODES), set by the controller.
 
 from . import protocol as p
 from . import liveutil as lu
 
 
 class View(object):
+
+    mode = None
+    owns_list = False     # True while the view shows a v2 LIST
 
     def __init__(self, song, display):
         self._song = song
@@ -46,6 +51,8 @@ class View(object):
             if param is not None:
                 lu.begin_gesture(param)
                 self._touched[knob] = param
+                if shift:
+                    lu.reset_to_default(param)
         else:
             lu.end_gesture(self._touched.pop(knob, None))
 
@@ -61,10 +68,17 @@ class View(object):
     def render(self, shift):
         raise NotImplementedError
 
+    def meter_tracks(self):
+        """The tracks whose output the slot meters show (v2), or None."""
+        return None
+
     def render_header(self):
         track = lu.selected_track(self._song)
         self._display.text(p.TEXT_TRACK, lu.safe_name(track))
-        self._display.text(p.TEXT_DEVICE, lu.safe_name(lu.selected_device(self._song)))
+
+    def device_text(self):
+        """v1 TEXT_DEVICE in the mixer and clip views."""
+        return lu.safe_name(lu.selected_device(self._song))
 
     def render_nav_lights(self, up, down, left, right, push):
         d = self._display

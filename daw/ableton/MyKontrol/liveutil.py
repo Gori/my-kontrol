@@ -9,6 +9,8 @@
 # disabled parameter, arming a group track) are wrapped so a refused action
 # is a no-op instead of an exception in the script.
 
+import re
+
 from . import protocol as p
 
 # Knob feel. One relative step from the keyboard moves a continuous
@@ -224,6 +226,12 @@ def rack_instrument(rack, depth=0):
     return None
 
 
+def drum_rack(track):
+    """The track's first instrument if it is a Drum Rack, else None."""
+    rack, _ = track_instrument(track)
+    return rack if getattr(rack, "can_have_drum_pads", False) else None
+
+
 def track_instrument(track):
     """(rack, instrument) for the track's first instrument. rack is set when
     that first instrument is an Instrument or Drum Rack; instrument is the
@@ -287,6 +295,80 @@ def parameter_position(param):
         return 0
 
 
+def parameter_pos(param):
+    """Normalised u14 position (v2 VALUE)."""
+    if param is None:
+        return 0
+    try:
+        lo, hi = float(param.min), float(param.max)
+        if hi <= lo:
+            return 0
+        return p.position((float(param.value) - lo) / (hi - lo))
+    except Exception:
+        return 0
+
+
+def slot_info(param):
+    """(kind, flags, steps, default pos) for a v2 SLOT.
+
+    A quantized parameter with two values is a toggle, one with value
+    names an enum; everything else (including quantized numbers such as
+    a transpose in semitones) is continuous."""
+    kind, flags, steps, default = p.KIND_CONTINUOUS, 0, 0, 0
+    try:
+        lo, hi = float(param.min), float(param.max)
+    except Exception:
+        return kind, flags, steps, default
+    if lo < 0 < hi and abs(lo + hi) <= 1e-6 * (hi - lo):
+        flags |= p.SLOT_BIPOLAR
+    try:
+        if param.is_quantized:
+            items = list(getattr(param, "value_items", None) or ())
+            count = len(items) if items else int(round(hi - lo)) + 1
+            if count == 2:
+                kind = p.KIND_TOGGLE
+            elif items:
+                kind, steps = p.KIND_ENUM, min(127, len(items))
+    except Exception:
+        pass
+    try:
+        # Live only has a default for parameters that are not quantized.
+        value = float(param.default_value)
+        if hi > lo:
+            flags |= p.SLOT_HAS_DEFAULT
+            default = p.position((value - lo) / (hi - lo))
+    except Exception:
+        pass
+    return kind, flags, steps, default
+
+
+def reset_to_default(param):
+    try:
+        if param is not None and param.is_enabled:
+            param.value = param.default_value
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def colour(obj):
+    """Live's colour (0xRRGGBB) as a protocol colour: each byte >> 1, black
+    as 01 01 01, and 00 00 00 when the object has no colour."""
+    try:
+        value = obj.color
+    except Exception:
+        return p.NO_COLOUR
+    if value is None:
+        return p.NO_COLOUR
+    try:
+        value = int(value)
+    except Exception:
+        return p.NO_COLOUR
+    rgb = (((value >> 16) & 0xFF) >> 1, ((value >> 8) & 0xFF) >> 1, (value & 0xFF) >> 1)
+    return rgb if rgb != (0, 0, 0) else p.BLACK
+
+
 def parameter_text(param):
     """Live's own value text, e.g. "-6.0 dB", "440 Hz", "12L"."""
     if param is None:
@@ -301,15 +383,18 @@ def parameter_text(param):
         return ""
 
 
-def show_parameter(display, knob, param, label=None):
+def show_parameter(display, knob, param, label=None, colour=p.NO_COLOUR, group=""):
     if param is None:
         display.empty_knob(knob)
         return
-    display.knob(knob,
-                 safe_name(param) if label is None else label,
-                 parameter_text(param),
-                 parameter_position(param),
-                 parameter_flags(param))
+    name = safe_name(param) if label is None else label
+    if display.v2:
+        kind, flags, steps, default = slot_info(param)
+        display.slot(knob, kind, flags, steps, default, colour, name, group,
+                     parameter_pos(param), parameter_text(param))
+    else:
+        display.knob(knob, name, parameter_text(param), parameter_position(param),
+                     parameter_flags(param))
 
 
 class Nudger(object):
@@ -379,6 +464,132 @@ def sends(track):
         return list(track.mixer_device.sends)
     except Exception:
         return []
+
+
+# Live's output meters (Track.output_meter_left / _right) run from 0.0 to
+# 1.0 on the scale Live draws its own meters with, which Live does not
+# document. We take it to follow the volume fader's taper: 0.85 is 0 dBFS
+# and, below that, the level in dB falls about linearly with the meter
+# value, to roughly -70 dB at 0. That is an approximation, close around
+# the top of the range and loose near the bottom. METER (v2) wants
+# 0 = silence and 1..127 linear in dB from -60 dBFS to 0 dBFS and above.
+METER_ZERO_DB = 0.85
+METER_DB_AT_ZERO = -70.0
+METER_FLOOR_DB = -60.0
+
+
+def meter_level(value):
+    """Live meter value (0..1) -> METER level byte."""
+    try:
+        value = float(value)
+    except Exception:
+        return 0
+    if value <= 0.0:
+        return 0
+    db = (value - METER_ZERO_DB) / METER_ZERO_DB * -METER_DB_AT_ZERO
+    if db <= METER_FLOOR_DB:
+        return 0
+    return max(1, min(127, 1 + int(round(126 * (db - METER_FLOOR_DB) / -METER_FLOOR_DB))))
+
+
+def track_levels(track):
+    """(left, right) output meter of a track, 0..1 each."""
+    out = []
+    for name in ("output_meter_left", "output_meter_right"):
+        try:
+            out.append(float(getattr(track, name)))
+        except Exception:
+            out.append(0.0)
+    return tuple(out)
+
+
+# -- song key ---------------------------------------------------------------
+
+def scale_state(song):
+    """(state, root, mask, name) for SCALE. Live 12 has a song key (root
+    note and scale) and a Scale Mode switch; without them, or with the
+    switch off, no key is set."""
+    try:
+        if not song.scale_mode:
+            return p.SCALE_NONE, 0, 1, ""
+        root = int(song.root_note) % 12
+        mask = 1
+        for interval in song.scale_intervals:
+            mask |= 1 << (int(interval) % 12)
+        return p.SCALE_SONG, root, mask, str(song.scale_name or "")
+    except Exception:
+        return p.SCALE_NONE, 0, 1, ""
+
+
+# -- drum pads --------------------------------------------------------------
+
+# Most important first: the keyboard keeps only the first key_labels.
+ROLE_ORDER = (p.ROLE_KICK, p.ROLE_SNARE, p.ROLE_CLOSED_HAT, p.ROLE_OPEN_HAT,
+              p.ROLE_PEDAL_HAT, p.ROLE_CLAP, p.ROLE_RIM, p.ROLE_TOM, p.ROLE_CYMBAL,
+              p.ROLE_PERCUSSION, p.ROLE_OTHER)
+_NOT_TOMS = ("custom", "bottom", "atom")
+
+
+def key_role(name):
+    """Guess a drum role from a pad name ("Kick 808", "Hihat Open"...)."""
+    s = str(name or "").lower()
+    words = re.findall(r"[a-z]+", s)
+
+    def has(*parts):
+        return any(part in s for part in parts)
+
+    def word(*names):
+        return any(w in names for w in words)
+
+    def edge(*parts):   # a word starting or ending with one of parts
+        return any(w.startswith(part) or w.endswith(part) for w in words for part in parts)
+
+    hat = has("hat") or word("hh", "chh", "ohh", "ch", "oh")
+    if edge("rim", "stick"):
+        return p.ROLE_RIM
+    if has("clap"):
+        return p.ROLE_CLAP
+    if has("kick") or word("bd", "kik"):
+        return p.ROLE_KICK
+    if has("snare") or word("sd", "snr"):
+        return p.ROLE_SNARE
+    if word("ohh", "oh") or (hat and has("open")):
+        return p.ROLE_OPEN_HAT
+    if has("pedal") or word("phh"):
+        return p.ROLE_PEDAL_HAT
+    if hat:
+        return p.ROLE_CLOSED_HAT
+    if edge("tom") and not word(*_NOT_TOMS):
+        return p.ROLE_TOM
+    if has("cymbal", "crash", "ride", "china", "splash"):
+        return p.ROLE_CYMBAL
+    if has("perc", "shaker", "conga", "bongo", "tamb"):
+        return p.ROLE_PERCUSSION
+    return p.ROLE_OTHER
+
+
+def drum_keys(rack, limit):
+    """KEY entries [(note, role, colour, label)] for the pads of a Drum Rack
+    that hold a chain, in ROLE_ORDER, then by note; at most `limit`."""
+    if rack is None:
+        return []
+    entries = []
+    try:
+        pads = list(rack.drum_pads)
+    except Exception:
+        return []
+    for pad in pads:
+        try:
+            chains = list(pad.chains)
+            if not chains:
+                continue
+            name, note = safe_name(pad), int(pad.note)
+        except Exception:
+            continue
+        role = key_role(name)
+        entries.append((ROLE_ORDER.index(role), note, role, colour(chains[0]), name))
+    entries.sort(key=lambda e: (e[0], e[1]))
+    return [(note, role, rgb, name) for _, note, role, rgb, name in entries[:limit]]
 
 
 # -- clips ------------------------------------------------------------------

@@ -72,7 +72,9 @@ class Connection(unittest.TestCase):
     def test_hello_on_start_and_on_hi(self):
         h = Harness()
         h.engine.start()
-        self.assertEqual(h.sync(), [p.hello()])
+        out = h.sync()
+        self.assertEqual(len(out), 1)
+        self.assertEqual(p.parse_host(out[0]).proto, p.PROTOCOL_V2)
         h.send(p.hi())
         self.assertEqual(h.screen.hello, 2)
 

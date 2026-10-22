@@ -18,12 +18,14 @@
 #   4D push               device on / off
 #
 # Title fields: TEXT_DEVICE = the device whose bank is shown, TEXT_BANK =
-# bank name, TEXT_SUBTITLE = bank position ("2/6"). The bank is remembered
-# per device (Plug-in) or per track (Instrument).
+# bank name, TEXT_SUBTITLE = bank position ("2/6"). In v2 the PAGE has the
+# device as title, the bank name as subtitle and the bank position as
+# bank / banks. The bank is remembered per device (Plug-in) or per track
+# (Instrument).
 
 from . import protocol as p
 from . import liveutil as lu
-from .banks import Banks
+from .banks import Banks, is_generated_name
 from .view_base import View
 
 
@@ -104,17 +106,29 @@ class BankedView(View):
     def render(self, shift):
         d = self._display
         banks, _, index, owner, params = self._current()
-        d.text(p.TEXT_TRACK, lu.safe_name(lu.selected_track(self._song)))
-        d.text(p.TEXT_DEVICE, lu.safe_name(owner) if owner is not None
-               else lu.safe_name(self.target()))
+        track = lu.selected_track(self._song)
+        target = self.target()
+        d.text(p.TEXT_TRACK, lu.safe_name(track))
+        device = owner if owner is not None else target
+        name = lu.safe_name(device)
+        identity = (lu.live_id(track) if track is not None else None,
+                    lu.live_id(device) if device is not None else None,
+                    banks[index][1] if banks else None)
         if banks:
-            d.text(p.TEXT_BANK, banks[index][2])
-            d.text(p.TEXT_SUBTITLE, "%d/%d" % (index + 1, len(banks)))
+            bank_name = banks[index][2]
+            d.page(self.mode, name, bank_name, index, len(banks), identity,
+                   v1=(name, bank_name, "%d/%d" % (index + 1, len(banks))))
+            # Group: the rack for its macros, else a bank name Live gave.
+            if lu.is_rack(owner):
+                group = name
+            else:
+                group = "" if is_generated_name(bank_name) else bank_name
         else:
-            d.text(p.TEXT_BANK, self.empty_text())
-            d.text(p.TEXT_SUBTITLE, "")
+            d.page(self.mode, name if target is not None else self.empty_text(), "",
+                   identity=identity, v1=(name, self.empty_text(), ""))
+            group = ""
         for knob, param in enumerate(params):
-            lu.show_parameter(d, knob, param)
+            lu.show_parameter(d, knob, param, group=group)
 
         target = self.target()
         on = lu.device_on_parameter(target)

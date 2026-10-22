@@ -172,8 +172,10 @@ class ClipView(View):
 
         first, last = self.track_offset + 1, min(self.track_offset + COLS, len(tracks))
         top, bottom = self.scene_offset + 1, min(self.scene_offset + ROWS, len(scenes))
-        d.text(p.TEXT_BANK, "")
-        d.text(p.TEXT_SUBTITLE, "Tracks %d-%d Scenes %d-%d" % (first, last, top, bottom))
+        subtitle = "Tracks %d-%d Scenes %d-%d" % (first, last, top, bottom)
+        d.page(self.mode, "", "",               # v2: the grid and its headers say it all
+               identity=tuple(lu.live_id(t) if t is not None else None for t in cols),
+               v1=(self.device_text(), "", subtitle))
 
         states = []
         for r, scene in enumerate(rows):
@@ -189,7 +191,8 @@ class ClipView(View):
             if track is None:
                 d.empty_knob(c)
             else:
-                lu.show_parameter(d, c, lu.volume(track), label=lu.safe_name(track))
+                lu.show_parameter(d, c, lu.volume(track), label=lu.safe_name(track),
+                                  colour=lu.colour(track))
         for r, scene in enumerate(rows):
             if scene is None:
                 name = ""

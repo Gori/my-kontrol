@@ -117,11 +117,36 @@ for `MyKontrol`.
 | `session.py` | HI / HELLO / IDENT / PING / BYE |
 | `engine.py` | everything above wired together; what the tests drive |
 | `banks.py` | parameter banks from Live's bank definitions |
-| `controller.py`, `transport.py`, `*_view.py` (device = instrument/plug-in, mixer = volume/pan, sends, clip) | what the controls do, what the display shows |
+| `controller.py`, `transport.py`, `*_view.py` (device = instrument/plug-in, mixer = volume/pan, sends, clip, browser) | what the controls do, what the display shows |
 | `surface.py` | the Live `ControlSurface` |
 
 ## Protocol notes
 
-The script follows docs/protocol.md v1. If IDENT arrives without the view
-byte (older firmware), the script keeps its previous view (device view at
-first).
+The script speaks protocol version 2 and falls back to version 1. It always
+sends a v2 HELLO. Firmware that only
+knows v1 answers with a v1 IDENT, and the script then behaves exactly as
+before. If a v1 IDENT arrives without the view byte, the script keeps its
+previous view (instrument view at first).
+
+With a v2 keyboard:
+
+| Feature | What Live fills in |
+|---|---|
+| MODES | instrument, plug-in, volume, pan, sends, clips, and host mode 16 "Browser". Instrument / plug-in are disabled on a track without an instrument / device, sends without return tracks |
+| SET_MODE | clicking another device on the selected track in Live suggests plug-in mode, or instrument mode for the track's instrument |
+| PAGE / SLOT / VALUE | replace TEXT 0x01–0x03, 0x10–0x1F and PARAM. Toggle and enum slots for switches and choice parameters, Live's defaults, track colours in the mixer modes. While a knob turns, VALUE carries the text only when Live's text changes |
+| METER | track output in volume / pan / sends (one level per knob), the selected track L / R in instrument / plug-in mode. 10 per second |
+| TRANSPORT | punch, count-in and follow flags; TEXT 0x04 is the position, "bar.beat.sixteenth" |
+| SCALE | Live 12's song key while Scale Mode is on; no key otherwise and in older Live |
+| KEY | pad names of a Drum Rack on the selected track, kick, snare and hats first |
+| LIST | browser mode: 4D turn / up / down move, push loads (or opens a folder), right opens, left goes back, Preset ↑ / ↓ page |
+
+Not used: DESCRIBE (the script assumes 8 knobs and its own knob feel),
+LIGHT_RGB (Live has no button colours to show) and the message screen
+(nothing in Live needs it; the script only sends MESSAGE 0).
+
+Live does not document its meter scale; the conversion to the METER dB
+scale is an approximation, described in `liveutil.py`.
+
+`sim/mk_sim.py` plays a v2 keyboard by default; `--proto 1` plays older
+firmware.

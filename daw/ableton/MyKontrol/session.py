@@ -12,8 +12,12 @@
 #   stop()         -> BYE
 #
 # A HI while connected means the keyboard dropped out of host mode (reboot,
-# replug, or it missed our keep-alives): we answer HELLO and wait for IDENT.
-# Pure Python, no Live dependency.
+# replug), or, with v2 firmware, that it marked us as lost after missed
+# keep-alives: we answer HELLO and wait for IDENT, then send everything.
+#
+# `hello` is the HELLO we send. The script sends a v2 HELLO; firmware that
+# only knows v1 ignores the extra bytes and answers a v1 IDENT, and the
+# session then runs v1 (`proto`). Pure Python, no Live dependency.
 
 from . import protocol as p
 
@@ -21,40 +25,48 @@ DISCONNECTED = "disconnected"
 WAITING = "waiting"        # HELLO sent, no IDENT yet
 CONNECTED = "connected"
 
+SUPPORTED = (p.PROTOCOL_VERSION, p.PROTOCOL_V2)
+
 
 class Session(object):
 
     # The device leaves host mode after 3 s of silence; keep well inside it.
-    def __init__(self, ping_interval=0.5, log=None):
+    def __init__(self, ping_interval=0.5, log=None, hello=None):
         self.ping_interval = ping_interval
         self.state = DISCONNECTED
         self.ident = None
+        self._hello = tuple(hello) if hello is not None else p.hello()
         self._log = log or (lambda *a: None)
 
     @property
     def connected(self):
         return self.state == CONNECTED
 
+    @property
+    def proto(self):
+        """Protocol of the connected keyboard, else None."""
+        return self.ident.proto if self.ident is not None else None
+
     def start(self):
         self.state = WAITING
         self.ident = None
-        return [p.hello()]
+        return [self._hello]
 
     def on_hi(self, event):
         """Returns the messages to send."""
-        if event.proto != p.PROTOCOL_VERSION:
+        if event.proto < p.PROTOCOL_VERSION:
             self._log("ignoring HI for protocol", event.proto)
             return []
         if self.state == CONNECTED:
-            self._log("device left host mode; reconnecting")
+            self._log("keyboard lost us or left host mode; reconnecting")
         self.state = WAITING
         self.ident = None
-        return [p.hello()]
+        return [self._hello]
 
     def on_ident(self, event):
         """Returns (messages to send, True if the full state must follow)."""
-        if event.proto != p.PROTOCOL_VERSION:
-            self._log("device speaks protocol", event.proto, "- need", p.PROTOCOL_VERSION)
+        if event.proto not in SUPPORTED:
+            self._log("device speaks protocol", event.proto, "- need one of", SUPPORTED)
             self.state = DISCONNECTED
             return [p.bye()], False
         self.state = CONNECTED
@@ -82,6 +94,6 @@ def describe_ident(ident):
                                    (p.CAP_4D_ENCODER, "4D encoder"),
                                    (p.CAP_PEDAL_JACK, "pedal"))
             if ident.caps & bit]
-    return "%s fw %d.%d.%d, %d keys, %d knobs%s" % (
-        board, ident.fw[0], ident.fw[1], ident.fw[2], ident.keys, ident.knobs,
+    return "%s fw %d.%d.%d, protocol %d, %d keys, %d knobs%s" % (
+        board, ident.fw[0], ident.fw[1], ident.fw[2], ident.proto, ident.keys, ident.knobs,
         (", " + ", ".join(caps)) if caps else "")

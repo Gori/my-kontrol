@@ -1,4 +1,5 @@
-# Global buttons (same in every view), their lights, and TRANSPORT.
+# Global buttons (same in every view), their lights, TRANSPORT and (v2) the
+# song position, TEXT 0x04.
 #
 # Copyright (C) 2026 The My Kontrol contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -139,7 +140,25 @@ class TransportComponent(object):
                           ("can_capture_midi", p.TRANSPORT_CAPTURE)):
             if getattr(song, attr, False):
                 flags |= bit
-        self._display.transport(flags, song.tempo, self.beat(), song.signature_numerator)
+        # v2 second flags byte (sent only to a v2 keyboard)
+        flags2 = 0
+        if getattr(song, "punch_in", False) or getattr(song, "punch_out", False):
+            flags2 |= p.TRANSPORT2_PUNCH
+        if getattr(song, "is_counting_in", False):
+            flags2 |= p.TRANSPORT2_COUNT_IN
+        if getattr(song.view, "follow_song", False):
+            flags2 |= p.TRANSPORT2_FOLLOW
+        self._display.transport(flags, song.tempo, self.beat(), song.signature_numerator,
+                                flags2)
+        self._display.position(self.position())
+
+    def position(self):
+        """Song position as Live shows it: "bar.beat.sixteenth"."""
+        try:
+            t = self._song.get_current_beats_song_time()
+            return "%d.%d.%d" % (t.bars, t.beats, t.sub_division)
+        except Exception:
+            return ""
 
     def render_lights(self):
         song, d = self._song, self._display

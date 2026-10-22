@@ -85,6 +85,36 @@ class OutboxTests(unittest.TestCase):
         self.box.put("a", (1,), 0)
         self.assertEqual(self.box.flush(1.0), 1)
 
+    def test_after_holds_a_message_until_its_dependency_is_sent(self):
+        self.box.put("page", (1,), 2)
+        self.box.put("value", (2,), 0, after=("page",))      # urgent, but needs the page
+        self.box.put("slot", (3,), 2, after=("page",))
+        self.assertEqual(self.box.flush(0.0), 3)
+        self.assertEqual(self.sent[0], (1,))
+        self.assertEqual(sorted(self.sent[1:]), [(2,), (3,)])
+        self.box.put("value", (4,), 0, after=("page",))      # page already sent
+        self.box.flush(1.0)
+        self.assertEqual(self.sent[-1], (4,))
+
+    def test_after_waits_across_flushes(self):
+        box = Outbox(self.sent.append, max_messages=1, reserve=0)
+        box.put("page", (1,), 2)
+        box.put("value", (2,), 0, after=("page",))
+        self.assertEqual(box.flush(0.0), 1)
+        self.assertEqual(self.sent, [(1,)])
+        self.assertEqual(box.flush(1.0), 1)
+        self.assertEqual(self.sent, [(1,), (2,)])
+
+    def test_forget_where(self):
+        self.box.put(("slot", 0), (1,), 2)
+        self.box.put(("slot", 1), (2,), 2)
+        self.box.flush(0.0)
+        self.box.put(("slot", 1), (3,), 2)
+        self.box.forget_where(lambda k: k[0] == "slot")
+        self.assertFalse(self.box.is_pending(("slot", 1)))
+        self.box.put(("slot", 0), (1,), 2)            # forgotten: sent again
+        self.assertEqual(self.box.flush(1.0), 1)
+
     def test_events_are_not_deduplicated(self):
         self.box.post("n", (5,), 0)
         self.box.flush(0.0)
@@ -123,11 +153,20 @@ class SessionTests(unittest.TestCase):
 
     def test_wrong_protocol(self):
         s = Session()
-        self.assertEqual(s.on_hi(p.Hi(2)), [])
+        self.assertEqual(s.on_hi(p.Hi(0)), [])
         s.start()
-        msgs, full = s.on_ident(p.Ident(2, 1, (0, 0, 0), 32, 8, 0, None))
+        msgs, full = s.on_ident(p.Ident(3, 1, (0, 0, 0), 32, 8, 0, None))
         self.assertEqual((msgs, full), ([p.bye()], False))
         self.assertFalse(s.connected)
+
+    def test_v2_hello_and_either_ident(self):
+        hello = p.hello(p.PROTOCOL_V2, p.FEATURE_PARAMETERS, "Ableton Live", "12.1.5")
+        for proto in (p.PROTOCOL_VERSION, p.PROTOCOL_V2):
+            s = Session(hello=hello)
+            self.assertEqual(s.start(), [hello])
+            self.assertEqual(s.on_hi(p.Hi(1)), [hello])
+            msgs, full = s.on_ident(p.parse(p.ident(proto=proto)))
+            self.assertEqual((msgs, full, s.proto), ([], True, proto))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,9 @@ from .engine import Engine
 
 PORT_NAME = "My Kontrol DAW"
 
+# Song properties behind SCALE (Live 12); older Live lacks some of them.
+_SCALE_PROPERTIES = ("root_note", "scale_name", "scale_intervals", "scale_mode")
+
 # Notes and CCs on channel 16 that Live must forward to the script instead
 # of treating them as MIDI-mappable input.
 _FORWARD_NOTES = range(0, 0x48)                       # buttons 0..63, knob touch 0x40..0x47
@@ -39,6 +42,20 @@ def _live_banks():
     return Banks()
 
 
+def _live_version():
+    """Live's version for HELLO, e.g. "12.1.5"."""
+    try:
+        app = Live.Application.get_application()
+        return "%d.%d.%d" % (app.get_major_version(), app.get_minor_version(),
+                             app.get_bugfix_version())
+    except Exception:
+        return ""
+
+
+def _live_browser():
+    return Live.Application.get_application().browser
+
+
 class MyKontrol(ControlSurface):
 
     def __init__(self, c_instance):
@@ -51,8 +68,19 @@ class MyKontrol(ControlSurface):
                                   clock=time.monotonic,
                                   banks=_live_banks(),
                                   highlight=self._highlight,
-                                  log=self.log_message)
+                                  log=self.log_message,
+                                  host_version=_live_version(),
+                                  browser=_live_browser)
             self.song().add_current_song_time_listener(self._on_song_time)
+            self._song_listeners = []
+            for name in _SCALE_PROPERTIES:
+                add = getattr(self.song(), "add_%s_listener" % name, None)
+                if add is not None:
+                    try:
+                        add(self._on_song_state)
+                        self._song_listeners.append(name)
+                    except Exception:
+                        pass
         self._guarded(self._engine.start)
         self.log_message("My Kontrol script loaded")
 
@@ -101,6 +129,9 @@ class MyKontrol(ControlSurface):
     def _on_song_time(self):
         self._guarded(self._engine.song_time_changed)
 
+    def _on_song_state(self):
+        self._guarded(self._engine.state_changed)
+
     # _Framework already listens to Song.View.selected_track / selected_scene
     # and calls these; hook them for prompt redraws.
     def _on_selected_track_changed(self):
@@ -126,5 +157,11 @@ class MyKontrol(ControlSurface):
         song = self.song()
         if song.current_song_time_has_listener(self._on_song_time):
             song.remove_current_song_time_listener(self._on_song_time)
+        for name in getattr(self, "_song_listeners", ()):
+            try:
+                if getattr(song, "%s_has_listener" % name)(self._on_song_state):
+                    getattr(song, "remove_%s_listener" % name)(self._on_song_state)
+            except Exception:
+                pass
         self._guarded(self._engine.stop)
         super(MyKontrol, self).disconnect()

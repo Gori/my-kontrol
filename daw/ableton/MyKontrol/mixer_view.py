@@ -11,7 +11,9 @@
 #
 # The pages cover visible tracks, then return tracks, then the master. When
 # the selected track changes, the page follows it so it stays on screen.
-# The keyboard draws the mode name itself; we only send the page subtitle.
+# v1: the keyboard draws the mode name itself; we only send the page
+# subtitle. v2: the same in PAGE (no title, "Tracks 9-16"), knobs in track
+# colours, and the slot meters show the 8 tracks' output.
 
 from . import protocol as p
 from . import liveutil as lu
@@ -89,6 +91,9 @@ class MixerView(TrackSelectView):
     def knob_parameter(self, knob, shift):
         return self._param(self._page()[1][knob])
 
+    def meter_tracks(self):
+        return self._page()[1]
+
     # -- input --------------------------------------------------------------
 
     def enter(self):
@@ -111,14 +116,18 @@ class MixerView(TrackSelectView):
         d = self._display
         self.render_header()
         tracks, page = self._page()
-        d.text(p.TEXT_BANK, "")
         last = min(self._offset + PAGE, len(tracks))
-        d.text(p.TEXT_SUBTITLE, "Tracks %d-%d" % (self._offset + 1, last))
+        subtitle = "Tracks %d-%d" % (self._offset + 1, last)
+        d.page(self.mode, "", subtitle,
+               self._offset // PAGE, (len(tracks) + PAGE - 1) // PAGE,
+               identity=tuple(lu.live_id(t) if t is not None else None for t in page),
+               v1=(self.device_text(), "", subtitle))
         for knob, track in enumerate(page):
             if track is None:
                 d.empty_knob(knob)
             else:
-                lu.show_parameter(d, knob, self._param(track), label=lu.safe_name(track))
+                lu.show_parameter(d, knob, self._param(track), label=lu.safe_name(track),
+                                  colour=lu.colour(track))
         self.render_track_nav_lights()
         dim = lambda ok: p.LIGHT_DIM if ok else p.LIGHT_OFF
         d.light(p.CTL_PRESET_UP, dim(self._offset > 0))

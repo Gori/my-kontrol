@@ -19,6 +19,8 @@
 # instead of calling set_parameter_host(), because the definition objects
 # are shared module state inside Live.
 
+import re
+
 BANK_PARAMETERS_KEY = "Parameters"
 MAIN_BANK = "Main"
 MAX_MAIN_BANK_INDEX = -1
@@ -32,6 +34,11 @@ _RACK_BANKS = (
     ("Macros", ["Macro %d" % i for i in range(1, 9)]),
     ("Macros 2", ["Macro %d" % i for i in range(9, 17)]),
 )
+
+
+def is_generated_name(name):
+    """True for the "Bank 3" names made up here when Live gives none."""
+    return re.match(r"^Bank \d+$", name or "") is not None
 
 
 def _str(value):

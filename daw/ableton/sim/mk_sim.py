@@ -14,6 +14,10 @@
 #
 # Virtual ports need macOS or Linux (ALSA); on Windows use loopMIDI and
 # --connect to attach to existing ports instead.
+#
+# It speaks protocol v2 by default (docs/protocol.md): it answers MODES
+# and SET_MODE with VIEW, and M / S skip the modes the host disabled.
+# --proto 1 plays older firmware, which answers any HELLO with a v1 IDENT.
 
 import argparse
 import os
@@ -61,7 +65,7 @@ commands (controls by name or ID; knobs are 1-8):
   t <knob> [on|off]    touch a knob (no arg: touch and release)
   e <delta>            turn the 4D encoder
   up down left right push    4D buttons (prefix "shift" to hold Shift)
-  view instrument|plugin|volume|pan|sends|clips   change view (sends VIEW)
+  view instrument|plugin|volume|pan|sends|clips|<id>   change view (sends VIEW)
   b plugin / b shift+plugin / b track / b shift+track / b browser
                        view buttons, as on the keyboard
   b mute / b solo      previous / next knob mode (handled by the keyboard);
@@ -76,9 +80,11 @@ controls: """ + " ".join(sorted(CONTROL_BY_NAME))
 
 class Simulator(object):
 
-    def __init__(self, port_name, caps, verbose, connect):
+    def __init__(self, port_name, caps, verbose, connect, proto=p.PROTOCOL_V2):
         self.lock = threading.RLock()
         self.screen = Screen()
+        self.proto = proto
+        self.session_proto = None
         self.host_mode = False
         self.view = p.VIEW_INSTRUMENT
         self.shift = False
@@ -139,21 +145,35 @@ class Simulator(object):
                 self.say("?? %s" % " ".join("%02X" % b for b in message))
                 return
             if isinstance(decoded, p.Hello):
-                if decoded.proto != p.PROTOCOL_VERSION:
-                    self.say("-- HELLO for protocol %d ignored" % decoded.proto)
-                    return
+                proto = min(decoded.proto, self.proto)
+                self.session_proto = proto
                 self.send(p.ident(board=1, fw=(0, 1, 0), keys=32, knobs=8, caps=self.caps,
-                                  view=self.view))
+                                  view=self.view, proto=proto,
+                                  list_rows=self.screen.list_rows,
+                                  list_cache=self.screen.list_cache,
+                                  key_labels=self.screen.key_labels))
                 if not self.host_mode:
-                    self.say("-- HELLO: host mode on, sent IDENT (view %s)"
-                             % p.VIEW_NAMES[self.view])
+                    self.say("-- %s: host mode on, sent IDENT v%d (view %s)"
+                             % (describe(decoded), proto, view_name(self.view)))
                 self.host_mode = True
+                return
+            if isinstance(decoded, p.Modes):
+                self.say(describe(decoded))
+                self.send(p.view(self.view))
+                return
+            if isinstance(decoded, p.SetMode):
+                self.say(describe(decoded))
+                if self.mode_enabled(decoded.mode):
+                    self.set_view(decoded.mode, announce=False)
+                self.send(p.view(self.view))
                 return
             if isinstance(decoded, p.Bye):
                 self.say("BYE")
                 self.leave_host_mode("host said BYE")
                 return
-            if self.quiet and isinstance(decoded, (p.Ping, p.Transport)):
+            if self.quiet and isinstance(decoded, (p.Ping, p.Transport, p.Meter)):
+                return
+            if self.quiet and isinstance(decoded, p.Text) and decoded.field == p.TEXT_POSITION:
                 return
             self.say(describe(decoded))
 
@@ -203,12 +223,26 @@ class Simulator(object):
                 return True
             return self.control(p.button(control, pressed))
 
+    def mode_enabled(self, mode):
+        if self.screen.modes is None:
+            return mode in p.VIEWS
+        return any(m == mode and f & p.MODE_ENABLED for m, f, _ in self.screen.modes)
+
+    def mode_order(self):
+        """M / S order: the user's standard modes, then host modes (v2)."""
+        if self.session_proto is None or self.session_proto < p.PROTOCOL_V2 \
+                or self.screen.modes is None:
+            return MODE_ORDER
+        hosts = [m for m, _, _ in self.screen.modes if m in p.HOST_MODES]
+        return tuple(m for m in MODE_ORDER + tuple(hosts) if self.mode_enabled(m))
+
     def step_mode(self, direction):
-        if self.view in MODE_ORDER:
-            i = (MODE_ORDER.index(self.view) + direction) % len(MODE_ORDER)
+        order = self.mode_order() or MODE_ORDER
+        if self.view in order:
+            i = (order.index(self.view) + direction) % len(order)
         else:
-            i = 0 if direction > 0 else len(MODE_ORDER) - 1
-        self.set_view(MODE_ORDER[i])
+            i = 0 if direction > 0 else len(order) - 1
+        self.set_view(order[i])
 
     def press(self, controls):
         for c in controls:
@@ -217,18 +251,20 @@ class Simulator(object):
         for c in reversed(controls):
             self.button(c, False)
 
-    def set_view(self, view_id):
+    def set_view(self, view_id, announce=True):
         with self.lock:
             self.view = view_id
-            if self.host_mode:
+            self.screen.mode = view_id
+            if self.host_mode and announce:
                 self.send(p.view(view_id))
-            self.say("-- view: %s" % p.VIEW_NAMES[view_id])
+            self.say("-- view: %s" % view_name(view_id))
 
     # -- screen dump --------------------------------------------------------
 
     def dump(self):
         s = self.screen
-        lines = ["view %s, host mode %s" % (p.VIEW_NAMES[self.view], self.host_mode)]
+        lines = ["view %s, host mode %s, protocol %s" % (view_name(self.view), self.host_mode,
+                                                         self.session_proto)]
         for field in sorted(s.texts):
             if s.texts[field]:
                 lines.append("  %-12s %s" % (TEXT_FIELD_NAMES.get(field, hex(field)),
@@ -243,7 +279,30 @@ class Simulator(object):
             lines.append("  " + describe(s.transport))
         for row in s.grid_rows():
             lines.append("  |" + row + "|")
+        if s.page is not None:
+            lines.append("  " + describe(s.page))
+            for knob in sorted(s.slots):
+                slot = s.slots[knob]
+                if slot.kind == p.KIND_EMPTY:
+                    continue
+                pos, text = s.values.get(knob, (0, ""))
+                lines.append("    knob%d %-24s %-16s %5d %s" % (knob + 1, slot.name, slot.group,
+                                                             pos, text))
+        for meter in s.meters.values():
+            lines.append("  " + describe(meter))
+        if s.scale is not None:
+            lines.append("  " + describe(s.scale))
+        for key in s.keys:
+            lines.append("  " + describe(key))
+        if s.list is not None:
+            lines.append("  " + describe(s.list))
+            for row in s.visible_rows():
+                lines.append("    " + (describe(row) if row is not None else "(row missing)"))
         self.say("\n".join(lines))
+
+
+def view_name(view_id):
+    return p.VIEW_NAMES.get(view_id, "host mode %d" % view_id)
 
 
 def parse_controls(spec):
@@ -292,6 +351,8 @@ def run_command(sim, line):
             sim.press([p.CTL_SHIFT, CONTROL_BY_NAME[args[0]]])
         elif cmd == "view" and args and args[0] in VIEW_BY_NAME:
             sim.set_view(VIEW_BY_NAME[args[0]])
+        elif cmd == "view" and args and args[0].isdigit():
+            sim.set_view(int(args[0]))
         elif cmd == "refresh":
             sim.control(p.refresh())
         elif cmd == "screen":
@@ -317,11 +378,14 @@ def main():
                          "creating virtual ones (Windows/loopMIDI)")
     ap.add_argument("--caps", type=int, default=p.CAP_TOUCH_STRIPS | p.CAP_KNOB_TOUCH
                     | p.CAP_4D_ENCODER | p.CAP_PEDAL_JACK, help="IDENT caps bits")
-    ap.add_argument("--verbose", action="store_true", help="also print TRANSPORT and PING")
+    ap.add_argument("--verbose", action="store_true",
+                    help="also print TRANSPORT, PING, METER and the position")
+    ap.add_argument("--proto", type=int, default=p.PROTOCOL_V2, choices=(1, 2),
+                    help="protocol version to play (1: older firmware)")
     ap.add_argument("--script", help="run commands from this file (one per line), then stdin")
     args = ap.parse_args()
 
-    sim = Simulator(args.port, args.caps, args.verbose, args.connect)
+    sim = Simulator(args.port, args.caps, args.verbose, args.connect, args.proto)
     threading.Thread(target=sim.heartbeat, daemon=True).start()
     sim.say("My Kontrol simulator on %r. Select it in Live; type help." % args.port)
 

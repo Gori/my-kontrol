@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.join(HERE, "..", "sim"))
 
 class FakeParam(object):
 
-    def __init__(self, name, value=0.0, min=0.0, max=1.0, quantized=False, unit=""):
+    def __init__(self, name, value=0.0, min=0.0, max=1.0, quantized=False, unit="",
+                 default=None, items=None):
         self.name = name
         self.value = value
         self.min = min
@@ -26,9 +27,16 @@ class FakeParam(object):
         self.is_enabled = True
         self.unit = unit
         self.gestures = []
+        if default is not None:      # Live has none for quantized parameters
+            self.default_value = default
+        if items is not None:
+            self.value_items = list(items)
 
     def __str__(self):
         if self.is_quantized:
+            items = getattr(self, "value_items", None)
+            if items:
+                return items[int(self.value)]
             return "On" if self.value else "Off" if self.max == 1 else str(int(self.value))
         return "%.2f%s" % (self.value, self.unit)
 
@@ -64,6 +72,14 @@ class FakeChain(object):
             d.canonical_parent = self
 
 
+class FakeDrumPad(object):
+
+    def __init__(self, note, name="", chains=()):
+        self.note = note
+        self.name = name
+        self.chains = list(chains)
+
+
 class FakeRack(FakeDevice):
 
     def __init__(self, name, chains, drum=False):
@@ -74,6 +90,15 @@ class FakeRack(FakeDevice):
         self.can_have_drum_pads = drum
         self.chains = list(chains)
         self.view = _Obj(selected_chain=None, selected_drum_pad=None)
+        if drum:
+            self.drum_pads = [FakeDrumPad(n, "") for n in range(128)]
+
+    def set_pad(self, note, name, colour=None):
+        chain = FakeChain([])
+        if colour is not None:
+            chain.color = colour
+        self.drum_pads[note] = FakeDrumPad(note, name, [chain])
+        return chain
 
 
 class FakeClip(object):
@@ -131,10 +156,14 @@ class FakeTrack(object):
         self.solo = False
         self.arm = False
         self.can_be_armed = armable
-        self.mixer_device = _Obj(volume=FakeParam("Volume", 0.85, 0.0, 1.0, unit=" dB"),
-                                 panning=FakeParam("Pan", 0.0, -1.0, 1.0),
+        self.mixer_device = _Obj(volume=FakeParam("Volume", 0.85, 0.0, 1.0, unit=" dB",
+                                                  default=0.85),
+                                 panning=FakeParam("Pan", 0.0, -1.0, 1.0, default=0.0),
                                  sends=[])
         self.clip_slots = [FakeClipSlot() for _ in range(n_scenes)]
+        self.color = 0xFF3C28
+        self.output_meter_left = 0.0
+        self.output_meter_right = 0.0
 
 
 class FakeQuantization(object):
@@ -160,6 +189,7 @@ class FakeSongView(object):
         self.selected_scene = None
         self.detail_clip = None
         self.highlighted_clip_slot = None
+        self.follow_song = False
 
     def select_device(self, device):
         # Live selects nested devices too; the owning track is the one whose
@@ -210,13 +240,22 @@ class FakeSong(object):
         self.can_capture_midi = False
         self.midi_recording_quantization = FakeQuantization("rec_q_no_q")
         self.beats = 1
+        self.bars = 1
+        self.sixteenth = 1
+        self.punch_in = False
+        self.punch_out = False
+        self.is_counting_in = False
+        self.root_note = 0
+        self.scale_name = "Major"
+        self.scale_intervals = [0, 2, 4, 5, 7, 9, 11]
+        self.scale_mode = False
         self.calls = []
 
     def all_tracks(self):
         return self.visible_tracks + self.return_tracks + [self.master_track]
 
     def get_current_beats_song_time(self):
-        return _Obj(bars=1, beats=self.beats, sub_division=1, ticks=0)
+        return _Obj(bars=self.bars, beats=self.beats, sub_division=self.sixteenth, ticks=0)
 
     def _call(name):
         def method(self):
@@ -237,6 +276,33 @@ class FakeSong(object):
     redo = _call("redo")
     capture_midi = _call("capture_midi")
     del _call
+
+
+class FakeBrowserItem(object):
+
+    def __init__(self, name, children=(), folder=False, loadable=False):
+        self.name = name
+        self.children = list(children)
+        self.is_folder = folder
+        self.is_loadable = loadable
+
+
+class FakeBrowser(object):
+    """Live's Browser: category items and load_item()."""
+
+    def __init__(self):
+        self.loaded = []
+        presets = [FakeBrowserItem("Preset %d" % i, loadable=True) for i in range(1, 4)]
+        self.instruments = FakeBrowserItem("Instruments", [
+            FakeBrowserItem("Operator", presets, loadable=True),
+            FakeBrowserItem("Drum Rack", loadable=True)], folder=True)
+        self.audio_effects = FakeBrowserItem("Audio Effects", [
+            FakeBrowserItem("Effect %02d" % i, loadable=True) for i in range(40)], folder=True)
+        self.sounds = FakeBrowserItem("Sounds", folder=True)
+        self.user_folders = [FakeBrowserItem("My Folder", folder=True)]
+
+    def load_item(self, item):
+        self.loaded.append(item.name)
 
 
 class Wire(object):

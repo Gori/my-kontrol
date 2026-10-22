@@ -103,6 +103,9 @@ class DeviceDecoder(unittest.TestCase):
         self.assertEqual(p.parse((0xBF, 0x30, 66)), p.EncoderTurn(-2))
         self.assertEqual(p.parse((0x9F, 0x43, 127)), p.KnobTouch(3, True))
         self.assertEqual(p.parse((0x9F, 0x43, 0)), p.KnobTouch(3, False))
+        self.assertEqual(p.parse((0x9F, 0x48, 127)), p.StripTouch(0, True))
+        self.assertEqual(p.parse((0x9F, 0x49, 0)), p.StripTouch(1, False))
+        self.assertIsNone(p.parse((0x9F, 0x4A, 127)))
 
     def test_relative_roundtrip(self):
         for d in range(-63, 64):

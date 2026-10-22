@@ -11,8 +11,12 @@
 #
 # flush() sends most urgent first, but never more than `max_messages`
 # messages or `max_bytes` bytes within any sliding `window` seconds. What
-# does not fit stays queued for a later flush. Pure Python, no Live
-# dependency.
+# does not fit stays queued for a later flush.
+#
+# A message can name keys it must follow (`after`): it is held back while
+# any of them is still queued. v2 needs this because a SLOT or VALUE that
+# reaches the keyboard before its PAGE is dropped there. Pure Python, no
+# Live dependency.
 
 from collections import deque
 
@@ -32,38 +36,39 @@ class Outbox(object):
         self.reserve_bytes = reserve_bytes
         self.bulk_priority = bulk_priority
         self._sent = {}      # key -> bytes the device has
-        self._pending = {}   # key -> [priority, seq, bytes, is_state]
+        self._pending = {}   # key -> [priority, seq, bytes, is_state, after keys]
         self._seq = 0
         self._recent = deque()   # (time, size) of sends inside the window
         self._recent_bytes = 0
 
     # -- queueing -----------------------------------------------------------
 
-    def put(self, key, message, priority):
+    def put(self, key, message, priority, after=()):
         """Queue a state message unless the device already shows it."""
         message = tuple(message)
         if self._sent.get(key) == message:
             # Back to what the device has: drop any stale pending change.
             self._pending.pop(key, None)
             return
-        self._queue(key, message, priority, True)
+        self._queue(key, message, priority, True, after)
 
-    def post(self, key, message, priority):
+    def post(self, key, message, priority, after=()):
         """Queue a one-shot event (for example NOTIFY). Not deduplicated
         against earlier sends; a newer event with the same key replaces a
         pending one."""
-        self._queue(key, tuple(message), priority, False)
+        self._queue(key, tuple(message), priority, False, after)
 
-    def _queue(self, key, message, priority, is_state):
+    def _queue(self, key, message, priority, is_state, after):
         entry = self._pending.get(key)
         if entry is None:
             self._seq += 1
-            self._pending[key] = [priority, self._seq, message, is_state]
+            self._pending[key] = [priority, self._seq, message, is_state, tuple(after)]
         else:
             # Keep the original position so a busy key cannot starve others.
             entry[0] = min(entry[0], priority)
             entry[2] = message
             entry[3] = is_state
+            entry[4] = tuple(after)
 
     def invalidate(self):
         """Forget what the device shows and drop pending messages, so the
@@ -74,6 +79,15 @@ class Outbox(object):
     def forget(self, key):
         """Forget one key (the next put() for it is always sent)."""
         self._sent.pop(key, None)
+
+    def forget_where(self, test):
+        """Forget and drop every key for which test(key) is true."""
+        for table in (self._sent, self._pending):
+            for key in [k for k in table if test(k)]:
+                del table[key]
+
+    def is_pending(self, key):
+        return key in self._pending
 
     # -- sending ------------------------------------------------------------
 
@@ -95,11 +109,22 @@ class Outbox(object):
     def flush(self, now):
         """Send as much as the window allows. Returns the count."""
         self._expire(now)
-        if not self._pending:
-            return 0
-        order = sorted(self._pending.items(), key=lambda kv: (kv[1][0], kv[1][1]))
         sent = 0
-        for key, (priority, _, message, is_state) in order:
+        while self._pending:
+            # One more pass when something held back by `after` may now go.
+            progress, held = self._pass(now)
+            sent += progress
+            if not (progress and held):
+                break
+        return sent
+
+    def _pass(self, now):
+        order = sorted(self._pending.items(), key=lambda kv: (kv[1][0], kv[1][1]))
+        sent, held = 0, False
+        for key, (priority, _, message, is_state, after) in order:
+            if any(k in self._pending for k in after):
+                held = True
+                continue
             bulk = priority >= self.bulk_priority
             max_messages = self.max_messages - (self.reserve if bulk else 0)
             max_bytes = self.max_bytes - (self.reserve_bytes if bulk else 0)
@@ -117,4 +142,4 @@ class Outbox(object):
                 self._sent[key] = message
             self.account(message, now)
             sent += 1
-        return sent
+        return sent, held
