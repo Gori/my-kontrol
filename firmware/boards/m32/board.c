@@ -213,13 +213,17 @@ int board_diag(uint8_t *buf, int max)
 
 /* NI's firmware keeps its USB serial string at 0x0801FBA7: a 0x03 byte,
    then 8 UTF-16LE characters (e.g. "00002701"); the bootloader reports the
-   same one. Reusing it keeps the keyboard recognisable across firmwares. */
+   same one. Reporting "MK-" + that serial keeps the keyboard recognisable
+   across firmwares, while the difference stops macOS from reusing the
+   single-port MIDI layout it cached for NI's firmware. */
 int board_serial(char *out, int max)
 {
     const volatile uint8_t *d = (const volatile uint8_t *)0x0801FBA7;
     if (d[0] != 3)
         return 0;
     int n = 0;
+    for (const char *p = "MK-"; *p && n < max - 1; p++)
+        out[n++] = *p;
     for (int i = 1; i < 17 && n < max - 1; i += 2) {
         uint8_t c = d[i];
         if (d[i + 1] || c < 0x21 || c > 0x7E)
@@ -227,5 +231,5 @@ int board_serial(char *out, int max)
         out[n++] = c;
     }
     out[n] = 0;
-    return n >= 4 ? n : 0;
+    return n >= 7 ? n : 0;
 }

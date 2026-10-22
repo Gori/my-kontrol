@@ -137,12 +137,18 @@ export function preferredType({ live = null, remembered = null } = {}) {
 // Remembered NI types, keyed by USB serial. `storage` is localStorage or similar;
 // every access may throw (private mode, blocked storage) and is then ignored.
 const KEY = 'mykontrol.flashType.';
+// My Kontrol reports NI's serial with an "MK-" prefix (a different serial
+// keeps macOS from reusing NI's cached MIDI port layout); key both the same.
+const serialKey = (serial) => String(serial).replace(/^MK-/, '');
+
 export function recallType(storage, serial) {
   if (!serial) return null;
+  serial = serialKey(serial);
   try { return (storage && storage.getItem(KEY + serial)) || null; } catch { return null; }
 }
 export function rememberType(storage, serial, type) {
   if (!serial || !type) return false;
+  serial = serialKey(serial);
   try {
     // "none" may come from My Kontrol; never let it replace a real NI answer.
     if (type === 'none' && recallType(storage, serial)) return false;
