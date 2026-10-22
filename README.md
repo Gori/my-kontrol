@@ -2,7 +2,7 @@
 
 *Open-source firmware for Native Instruments Komplete Kontrol keyboards.*
 
-## Your keyboard finally works without software, plugins or drivers.
+## Your keyboard finally works everywhere without special software or plugins.
 
 Plug it into any computer, phone or synth that speaks USB MIDI and play.
 Scales, chords, arpeggiator, note repeat and strum all run on the keyboard.
