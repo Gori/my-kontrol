@@ -27,3 +27,4 @@ void ui_invalidate(void);
 void ui_notify(const char *title, const char *value);
 void ui_focus_knob(int knob);               /* live value of a knob, whatever it controls */
 void ui_learn_begin(void);                  /* "hold a chord" dialog */
+void ui_message_scroll(int d);              /* the host's message screen, by lines */

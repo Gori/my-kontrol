@@ -47,9 +47,12 @@ int app_link(void)
 int app_shift(void) { return shift; }
 uint8_t app_knob_value(int page, int knob) { return knob_val[page & (KNOB_PAGES - 1)][knob % BOARD_KNOBS]; }
 
+static void daw_scale(void);
+
 void app_settings_changed(void)
 {
     settings_sanitize(&settings);
+    daw_scale();
     play_settings_changed();
     board_display_contrast(settings.contrast);
     settings_touch();
@@ -205,15 +208,61 @@ static void knob_target_set(uint8_t t, int announce)
     settings_touch();
     sync_tries = 4;
     sync_ms = 0;
-    if (app_link() == LINK_HOST)
+    const char *name = 0;
+    if (app_link() == LINK_HOST) {
         host_set_view(target_view[t]);
+        name = host_mode_name(target_view[t]);
+    }
     if (announce)
-        ui_notify("Knobs", knob_target_names[t]);
+        ui_notify("Knobs", name ? name : knob_target_names[t]);
     ui_invalidate();
+}
+
+/* host link: any view, standard (remembered as the knob target) or one the
+   host defined (MODES) */
+static void view_select(uint8_t view, int announce)
+{
+    for (int t = KM_INSTRUMENT; t < KM_COUNT; t++)
+        if (target_view[t] == view) {
+            knob_target_set(t, announce);
+            return;
+        }
+    host_set_view(view);
+    if (announce) {
+        const char *name = host_mode_name(view);
+        ui_notify("Knobs", name ? name : view == VIEW_CLIPS ? "Clips" : "Host");
+    }
+    ui_invalidate();
+}
+
+/* host link: the views M / S step through: the user's order, with only what
+   the host offers and has enabled, then the host's own modes */
+static int host_views(uint8_t *v)
+{
+    int n = 0;
+    for (int i = 0; i < KNOB_MODE_SLOTS; i++) {
+        uint8_t t = settings.knob_modes[i];
+        if (t != KM_OFF && host_mode_enabled(target_view[t]))
+            v[n++] = target_view[t];
+    }
+    for (int i = 0; i < host.n_modes; i++)
+        if (host.mode_id[i] >= VIEW_HOST && (host.mode_flags[i] & 1))
+            v[n++] = host.mode_id[i];
+    return n;
 }
 
 static void knob_target_step(int d)
 {
+    if (app_link() == LINK_HOST) {
+        uint8_t views[KNOB_MODE_SLOTS + HOST_MODES];
+        int n = host_views(views), cur = -1;
+        for (int i = 0; i < n; i++)
+            if (views[i] == host.view)
+                cur = i;
+        if (n)
+            view_select(views[cur < 0 ? (d > 0 ? 0 : n - 1) : (cur + d + n) % n], 1);
+        return;
+    }
     int n = KNOB_MODE_SLOTS, cur = -1;
     for (int i = 0; i < n; i++)
         if (settings.knob_modes[i] == settings.knob_target)
@@ -265,12 +314,15 @@ static int knob_mode_button(uint8_t ctl, int down)
         return 0;                          /* Shift + M / S: mute / solo */
     if (!down)
         return 1;
-    if (ctl == CTL_MUTE || ctl == CTL_SOLO)
+    if (ctl == CTL_MUTE || ctl == CTL_SOLO) {
         knob_target_step(ctl == CTL_SOLO ? 1 : -1);
-    else if (ctl == CTL_PLUGIN)
-        knob_target_set(shift ? KM_PLUGIN : KM_INSTRUMENT, 1);
+        return 1;
+    }
+    uint8_t t = ctl == CTL_PLUGIN ? (shift ? KM_PLUGIN : KM_INSTRUMENT) : (shift ? KM_SENDS : KM_VOLUME);
+    if (app_link() == LINK_HOST && host_mode_index(target_view[t]) < 0)
+        ui_notify(knob_target_names[t], "Not in this DAW");
     else
-        knob_target_set(shift ? KM_SENDS : KM_VOLUME, 1);
+        knob_target_set(t, 1);
     return 1;
 }
 
@@ -533,6 +585,11 @@ static void button(uint8_t ctl, int down)
             ui_input(map[ctl - CTL_NAV_UP], 0);
         return;
     }
+    /* a list or message screen from the host takes the 4D */
+    if (is_nav(ctl) && link == LINK_HOST && host_modal()) {
+        host_button(ctl, down);
+        return;
+    }
     /* with a DAW, the 4D navigates the focused window as a keyboard:
        arrows (Shift extends the selection), push = Return, Shift+push = Space */
     if (is_nav(ctl) && nav_keys(link)) {
@@ -602,10 +659,15 @@ static void button(uint8_t ctl, int down)
 
     switch (link) {
     case LINK_HOST:
-        if (ctl == CTL_BROWSER) {
+        if (ctl == CTL_BROWSER && host_mode_index(VIEW_CLIPS) >= 0) {
+            static uint8_t before_clips = VIEW_INSTRUMENT;
             if (down) {
-                host_set_view(host.view == VIEW_CLIPS ? target_view[settings.knob_target] : VIEW_CLIPS);
-                ui_notify("View", host.view == VIEW_CLIPS ? "Clips" : knob_target_names[settings.knob_target]);
+                if (host.view == VIEW_CLIPS) {
+                    view_select(host_mode_index(before_clips) >= 0 ? before_clips : target_view[settings.knob_target], 1);
+                } else {
+                    before_clips = host.view;
+                    view_select(VIEW_CLIPS, 1);
+                }
             }
             return;
         }
@@ -640,6 +702,13 @@ static void encoder(int d)
         return;
     }
     int link = app_link();
+    if (link == LINK_HOST && host_modal()) {
+        if (host.msg_id)
+            ui_message_scroll(d);
+        else
+            host_encoder(d);
+        return;
+    }
     if (nav_keys(link)) {
         /* turn = next / previous item; Shift + turn = zoom */
         for (int i = 0; i < (d < 0 ? -d : d) && i < 8; i++) {
@@ -683,9 +752,17 @@ void app_event(const mk_event_t *ev)
     case EV_KNOB_TOUCH:
         knob_touched(ev->id, ev->value);
         break;
-    case EV_STRIP:
+    case EV_STRIP: {
+        static uint8_t touched[2];
         play_strip(ev->id, ev->value);
+        int t = ev->value >= 0, s = ev->id & 1;
+        if (t != touched[s]) {
+            touched[s] = t;
+            if (app_link() == LINK_HOST)
+                host_note(0x48 + s, t);
+        }
         break;
+    }
     case EV_PEDAL:
         play_pedal(ev->id, ev->value);
         break;
@@ -795,16 +872,71 @@ static void update_lights(void)
         for (int c = 0; c < CTL_COUNT; c++)
             if (c != CTL_SHIFT && c != CTL_SCALE && c != CTL_ARP && c != CTL_OCT_DOWN &&
                 c != CTL_OCT_UP && c != CTL_TEMPO && c != CTL_BROWSER)
-                level[c] = host_level(host.light[c], dim, blink);
+                level[c] = host.lost ? (host.light[c] ? dim : 0) : host_level(host.light[c], dim, blink);
         if (host.light[CTL_TEMPO])
             level[CTL_TEMPO] = host_level(host.light[CTL_TEMPO], dim, blink) | level[CTL_TEMPO];
-        target_lights(level, dim, host.view == VIEW_CLIPS);
-        level[CTL_BROWSER] = ui_menu_open() || host.view == VIEW_CLIPS ? on : dim;
+        target_lights(level, dim, host.view == VIEW_CLIPS || host.view >= VIEW_HOST);
+        if (host_mode_index(VIEW_CLIPS) >= 0)
+            level[CTL_BROWSER] = ui_menu_open() || host.view == VIEW_CLIPS ? on : dim;
+        else if (!ui_menu_open())
+            level[CTL_BROWSER] = host_level(host.light[CTL_BROWSER], dim, blink);
         break;
     }
     for (int i = 0; i < CTL_COUNT; i++)
         board_light(i, level[i]);
     board_lights_flush();
+}
+
+/* ---------- what the host asks for ---------- */
+
+/* Smart Play follows the DAW's key while the host sets one (SCALE) and the
+   user lets it (System > DAW Scale) */
+static void daw_scale(void)
+{
+    static int32_t applied = -1;        /* root << 12 | mask, or -1 */
+    int on = app_link() == LINK_HOST && host.scale_state && settings.daw_scale == DAW_YES;
+    int32_t want = on ? (int32_t)host.scale_root << 12 | host.scale_mask : -1;
+    if (want == applied)
+        return;
+    applied = want;
+    sp_set_external_scale(on ? host.scale_root : -1, host.scale_mask, host.scale_name);
+    sp_config_changed();
+    if (on && settings.sp.scale_mode != SCALE_OFF) {
+        static const char *const names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        char b[24], *p = b;
+        for (const char *q = names[sp_scale_root()]; *q; ) *p++ = *q++;
+        *p++ = ' ';
+        for (const char *q = sp_scale_name(); *q && p < b + sizeof b - 1; ) *p++ = *q++;
+        *p = 0;
+        ui_notify("Scale from DAW", b);
+    }
+}
+
+static void host_requests(void)
+{
+    static uint8_t seen_modes, seen_scale;
+    if (host.modes_gen != seen_modes) {    /* MODES: stay if offered, else the first one */
+        seen_modes = host.modes_gen;
+        uint8_t v = host.view;
+        if (host_mode_index(v) < 0) {
+            uint8_t views[KNOB_MODE_SLOTS + HOST_MODES];
+            int n = host_views(views);
+            v = n ? views[0] : host.n_modes ? host.mode_id[0] : v;
+        }
+        view_select(v, 0);                 /* answers with VIEW */
+    }
+    if (host.set_mode) {                   /* SET_MODE: advisory */
+        uint8_t v = host.set_mode - 1;
+        host.set_mode = 0;
+        if (settings.daw_view == DAW_YES && host_mode_enabled(v) && v != host.view)
+            view_select(v, 1);
+        else
+            host_set_view(host.view);
+    }
+    if (host.scale_gen != seen_scale) {
+        seen_scale = host.scale_gen;
+        daw_scale();
+    }
 }
 
 /* ---------- main loop ---------- */
@@ -859,7 +991,10 @@ void app_poll(void)
         last_link = link;
         if (link != LINK_NONE)
             knob_target_set(settings.knob_target, 0);
+        daw_scale();
     }
+    if (link == LINK_HOST)
+        host_requests();
 
     static uint32_t light_acc;
     light_acc += dt;

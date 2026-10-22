@@ -70,5 +70,12 @@ int sp_clock_alive(void);              /* the clock that drives the engine is ru
 uint8_t sp_beat_tick(void);            /* 0..23 position in the current beat */
 int sp_held_count(void);               /* keys physically down */
 
+/* A scale from outside (the DAW's key) instead of cfg's root and type.
+   mask bit n = root + n is in the scale; root < 0 goes back to cfg.
+   Returns the matching sp_scales index, or -1 (name is kept, not copied). */
+int sp_set_external_scale(int root, uint16_t mask, const char *name);
+const char *sp_scale_name(void);       /* the scale in use */
+int sp_scale_root(void);
+
 /* chord learning: notes of all keys down when sp_learn_chord is called */
 int sp_learn_chord(void);              /* 0 if at least two notes were held */

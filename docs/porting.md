@@ -15,6 +15,7 @@ firmware/
     board.mk            PLATFORM, LDSCRIPT, BOARD_SRCS
     board_config.h      key count, knob count, display size, USB IDs, flash map
     board.c             board_info and the board_* functions from hal.h
+    surface.json        what the keyboard has, for DAWs (docs/surface.schema.json)
   platform/<family>/    one per MCU family: startup, clocks, flash, watchdog, bootloader handshake
     platform.mk         compiler and flags
 ```
@@ -62,6 +63,10 @@ timing. The core never sees a pin.
   - The UI is laid out for 128×32 monochrome (M32, A-series).
   - The S-series colour screens need a new renderer behind the same UI model in `core/ui.c`. Open an issue before starting, so we can plan it together.
 - **Lights:** `board_light` gets a logical control and a level 0..255. RGB key lights (Light Guide) would be a new `board_key_light` call.
+- **Surface description:**
+  - `surface.json` tells a DAW what the keyboard has: controls and their labels, knobs, strips, screen, lights and keys. It follows [`surface.schema.json`](surface.schema.json).
+  - The keyboard sends it in answer to `DESCRIBE` ([host protocol](protocol.md)), so a DAW that implements the protocol supports a new model without changes.
+  - The build compiles it into the firmware with `tools/surface2c.py`.
 - **USB:**
   - Keep NI's VID/PID in `board_config.h`, so NI's bootloader, NI's updater and the web installer still find the keyboard.
   - The bootloader's DFU PID goes in the web installer's board table (`web/js/images.js`).
@@ -103,5 +108,6 @@ a debugger this way.
 - [ ] `make BOARD=<name>` builds with no warnings, and `make test` passes.
 - [ ] `docs/hardware/<name>.md` describes pins, matrix, lights and the flash map.
 - [ ] `board_info.id` gets the next free number, listed in `docs/protocol.md`.
+- [ ] `surface.json` lists every control, with the labels printed on the hardware.
 - [ ] The web installer's board table has the new USB IDs and the stock image signature.
 - [ ] Tested on hardware: every key, button, light, knob and strip, plus recovery with the boot combo.

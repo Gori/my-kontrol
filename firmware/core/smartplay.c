@@ -80,10 +80,49 @@ static int clamp_note(int n)
     return n;
 }
 
+/* a scale set from outside (the DAW's key), replacing cfg's root and type */
+static sp_scale_t ext_scale;
+static int8_t ext_root = -1;
+
 static const sp_scale_t *scale(void)
 {
+    if (ext_root >= 0)
+        return &ext_scale;
     return &sp_scales[cfg->scale < sp_scale_count ? cfg->scale : 0];
 }
+
+static int root(void) { return ext_root >= 0 ? ext_root : cfg->root; }
+
+int sp_set_external_scale(int r, uint16_t mask, const char *name)
+{
+    if (r < 0) {
+        ext_root = -1;
+        return -1;
+    }
+    mask |= 1;
+    int found = -1;
+    for (int i = 0; i < sp_scale_count && found < 0; i++) {
+        uint16_t m = 0;
+        for (int k = 0; k < sp_scales[i].len; k++)
+            m |= 1 << sp_scales[i].steps[k];
+        if (m == (mask & 0xFFF))
+            found = i;
+    }
+    if (found >= 0) {
+        ext_scale = sp_scales[found];
+    } else {
+        ext_scale.name = name && name[0] ? name : "Custom";
+        ext_scale.len = 0;
+        for (int k = 0; k < 12; k++)
+            if (mask & (1 << k))
+                ext_scale.steps[ext_scale.len++] = k;
+    }
+    ext_root = r % 12;
+    return found;
+}
+
+const char *sp_scale_name(void) { return scale()->name; }
+int sp_scale_root(void) { return root(); }
 
 /* Snap to the nearest scale note; ties go down. */
 static int quantize(int note)
@@ -92,7 +131,7 @@ static int quantize(int note)
     for (int d = 0; d < 12; d++) {
         for (int sgn = -1; sgn <= 1; sgn += 2) {
             int n = note + sgn * d;
-            int pc = ((n - cfg->root) % 12 + 12) % 12;
+            int pc = ((n - root()) % 12 + 12) % 12;
             for (int i = 0; i < s->len; i++)
                 if (s->steps[i] == pc)
                     return n;
@@ -113,14 +152,14 @@ static int easy_map(int note)
        notes wrap the extra white keys into the next octave */
     int idx = white_index[pc];
     const sp_scale_t *s = scale();
-    return oct * 12 + cfg->root + (idx / s->len) * 12 + s->steps[idx % s->len];
+    return oct * 12 + root() + (idx / s->len) * 12 + s->steps[idx % s->len];
 }
 
 /* Position of note within the current scale as a degree index, or -1. */
 static int degree_of(int note, int *octave)
 {
     const sp_scale_t *s = scale();
-    int rel = note - cfg->root;
+    int rel = note - root();
     int oct = rel >= 0 ? rel / 12 : -((11 - rel) / 12);
     int pc = rel - oct * 12;
     for (int i = 0; i < s->len; i++)
@@ -136,7 +175,7 @@ static int scale_degree_note(int degree, int octave)
     const sp_scale_t *s = scale();
     octave += degree / s->len;
     degree %= s->len;
-    return cfg->root + octave * 12 + s->steps[degree];
+    return root() + octave * 12 + s->steps[degree];
 }
 
 /* Expand one played note into the configured chord, lowest note first. */

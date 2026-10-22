@@ -3,7 +3,7 @@
 #   make DEV=1            developer build: event injection over USB (tools/mktest.py)
 #   make BOARD=<name>     another keyboard, see docs/porting.md
 #   make test             host tests (no hardware)
-# Dependencies: git submodules in lib/ (git submodule update --init)
+# Dependencies: git submodules in lib/ (git submodule update --init), python3
 
 BOARD ?= m32
 include boards/$(BOARD)/board.mk
@@ -16,7 +16,8 @@ CORE_SRCS = $(wildcard core/*.c) usb/usb_device.c
 TUSB_SRCS = $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c \
             $(TUSB)/class/dfu/dfu_rt_device.c $(TUSB)/class/midi/midi_device.c $(TUSB)/class/hid/hid_device.c \
             $(PLATFORM_TUSB_SRCS)
-SRCS = $(CORE_SRCS) $(BOARD_SRCS) $(PLATFORM_SRCS) $(TUSB_SRCS)
+SURFACE = $(BUILD)/surface_json.c
+SRCS = $(CORE_SRCS) $(BOARD_SRCS) $(PLATFORM_SRCS) $(TUSB_SRCS) $(SURFACE)
 
 VERSION := $(shell sed -n 's/.*MK_VERSION "\(.*\)"/\1/p' core/version.h)
 
@@ -36,6 +37,10 @@ all: $(OUT).bin
 $(BUILD)/obj/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(SURFACE): boards/$(BOARD)/surface.json ../tools/surface2c.py
+	@mkdir -p $(dir $@)
+	python3 ../tools/surface2c.py $< $@
 
 $(OUT).elf: $(OBJS) boards/$(BOARD)/$(LDSCRIPT)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -lgcc -o $@

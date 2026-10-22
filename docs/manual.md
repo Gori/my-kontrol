@@ -6,7 +6,7 @@ The keyboard has three modes, and it picks one by itself:
 |---|---|---|
 | **Standalone** | no DAW is talking to it | none |
 | **Mackie** | a DAW speaks Mackie Control on the DAW port (Logic, Live, Cubase, Reaper, ...) | `MCU` |
-| **Live** | the My Kontrol script runs in Ableton Live | the Live views |
+| **Host** | a DAW speaks the [My Kontrol protocol](protocol.md): the Ableton Live script, or a DAW with built-in support | the DAW's views |
 
 **System > DAW Control > Off** keeps it in standalone mode whatever the computer does.
 
@@ -15,7 +15,7 @@ The keyboard has three modes, and it picks one by itself:
 | Port | Carries |
 |---|---|
 | **My Kontrol Keys** | keys, Smart Play output, knob CCs, strips, pedals; MIDI clock in and out |
-| **My Kontrol DAW** | control only: Mackie Control or the Live script. Never record from it. |
+| **My Kontrol DAW** | control only: Mackie Control or the My Kontrol protocol. Never record from it. |
 
 ## Buttons in every mode
 
@@ -25,8 +25,8 @@ The keyboard has three modes, and it picks one by itself:
 | Arp | arpeggiator on/off | Arp & Repeat menu |
 | Octave − / + | octave down / up (±3) | −: fixed velocity on/off, +: split on/off |
 | Octave − and + together | reset octave and transpose, all notes off | |
-| Browser | menu (Live: clip launcher) | menu |
-| Tempo | tap tempo (in Live mode: Live's tap tempo) | Tempo light off |
+| Browser | menu (host mode: clip launcher, if the DAW has one) | menu |
+| Tempo | tap tempo (host mode: the DAW's tap tempo) | Tempo light off |
 
 ## Standalone
 
@@ -45,14 +45,18 @@ The home screen shows channel, octave, transpose and split on top. Below that
 is the scale, or the last note played, with a velocity meter on the right.
 The bottom line shows what is shaping the notes: arp, repeat, chord and strum.
 
-## With a DAW (Logic, Live)
+## With a DAW
 
-Logic and other DAWs connect through Mackie Control. In Logic, go to
-Control Surfaces > Setup, choose New > Install > Mackie Control > Scan, and
-set both ports to **My Kontrol DAW**. Ableton Live connects through the My
-Kontrol script; see [daw/ableton](../daw/ableton/README.md).
+There are three ways in, and they all work the same way:
 
-Both DAWs work the same way.
+- **Mackie Control.** Logic and most other DAWs connect this way. In Logic,
+  go to Control Surfaces > Setup, choose New > Install > Mackie Control >
+  Scan, and set both ports to **My Kontrol DAW**.
+- **Ableton Live** uses the My Kontrol script; see
+  [daw/ableton](../daw/ableton/README.md).
+- **DAWs with built-in My Kontrol support** find the keyboard by themselves
+  and get the most out of it. The screen shows the DAW's name when it
+  connects.
 
 **Knobs.** **M** and **S** step through what the knobs control. The screen title shows
 the current mode, and each knob shows its name and a position bar. Touch a knob
@@ -70,6 +74,11 @@ to see its full name and value.
 - **Track** jumps to Volume (Shift: Sends).
 - The keyboard remembers the mode.
 - Controls > M/S Mode 1-5 sets the order, or switches modes off.
+- **DAW modes.** A DAW with built-in support can add its own modes after
+  these, for example takes or a browser. It can also switch the mode when you
+  click a plug-in; System > DAW Sets View > No stops that.
+- **Unavailable modes.** M / S skip modes the DAW can't show right now,
+  such as Plug-in with no plug-in selected.
 
 **4D encoder.** It works as a keyboard on whatever window has focus: tracks
 and regions in the arranger, notes in the piano roll, the browser.
@@ -99,9 +108,30 @@ The first time you plug it in, macOS shows the Keyboard Setup Assistant; close i
 
 The lights follow the DAW.
 
+**More with built-in support.** What these show depends on the DAW:
+
+- **Knobs.** The screen shows each knob's name and the DAW's own value text,
+  such as "250 ms" or "Hall". Touch a knob to see its group too, for example
+  "Filter Cutoff".
+- **Meters.** In the mixer modes a level line runs under each track's bar.
+  In the instrument and plug-in modes, the selected track's level runs up
+  the right edge.
+- **Scale.** Smart Play's scale follows the song's key, or the key of the clip
+  you're editing. The Scale button still turns it on and off. System > DAW
+  Scale > Ignore keeps your own scale.
+- **Drum names.** Playing a pad shows its name, such as "Kick", at the top
+  right.
+- **Lists.** Browsers, takes or suggestions fill the screen as a list. Turn
+  the 4D to move, push to choose, and left to go back.
+- **Messages.** Longer text, such as an assistant's reply, fills the screen.
+  Turn the 4D to scroll.
+- **Connection lost.** If the DAW stops answering, the screen says
+  "Connection lost" and the lights dim. Everything comes back when the DAW
+  does. After 30 s the keyboard goes back to standalone.
+
 ## Menu
 
-Open the menu with 4D push, or with Browser (Shift + Browser in Live mode).
+Open the menu with 4D push, or with Browser (Shift + Browser in host mode).
 
 - Turn or press up/down to move through the list.
 - Push to change a value; turning then edits it, and pushing again finishes.
@@ -152,6 +182,8 @@ Open the menu with 4D push, or with Browser (Shift + Browser in Live mode).
 | Setting | Values |
 |---|---|
 | DAW Control | auto, off |
+| DAW Scale | follow: Smart Play uses the DAW's key; ignore |
+| DAW Sets View | yes: the DAW may switch the knob mode; no |
 | Tempo Light | auto, always, off |
 | Light Level | brightness of unlit buttons |
 | Contrast, Screen Saver | |

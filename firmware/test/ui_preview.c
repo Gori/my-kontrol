@@ -9,6 +9,7 @@
 #include "host.h"
 #include "mcu.h"
 #include "midi.h"
+#include "play.h"
 #include "settings.h"
 #include "ui.h"
 
@@ -72,7 +73,7 @@ static void sysex(uint8_t cable, const uint8_t *m, int n)
 
 static void host_msg(uint8_t cmd, const char *data, int n)
 {
-    uint8_t m[64] = {0xF0, 0x7D, 0x4D, 0x4B, cmd};
+    uint8_t m[160] = {0xF0, 0x7D, 0x4D, 0x4B, cmd};
     memcpy(m + 5, data, n);
     m[5 + n] = 0xF7;
     sysex(PORT_DAW, m, n + 6);
@@ -250,6 +251,125 @@ int main(int argc, char **argv)
     host_text(HT_COL + 2, "Keys");
     tick(30);
     shot("live_clips");
+
+    /* a v2 host: modes, pages with metadata, meters, lists, messages */
+    host_msg(0x04, "", 0);
+    tick(30);
+    host_msg(0x00, "\x02\x00\x3F\x07" "Any DAW" "\x03" "2.1", 15);
+    tick(1500);
+    host_msg(0x09, "\x07" "\x05\x01\x00" "\x00\x01\x00" "\x01\x01\x00" "\x03\x01\x00" "\x04\x01\x00"
+                   "\x10\x01\x05" "Takes" "\x11\x01\x07" "Browser", 34);
+    tick(30);
+    press(CTL_PLUGIN);
+    tick(1500);
+    {
+        char b[80];
+        int n = 0;
+        b[n++] = 1; b[n++] = VIEW_INSTRUMENT; b[n++] = 1; b[n++] = 4;
+        b[n++] = 6; memcpy(b + n, "Retrox", 6); n += 6;
+        b[n++] = 6; memcpy(b + n, "Filter", 6); n += 6;
+        host_msg(0x20, b, n);
+        const char *pn[8] = {"Cutoff", "Reso", "Drive", "Env", "Attack", "Decay", "Mode", "Key"};
+        const char *pv[8] = {"2.4 kHz", "31 %", "+4.0 dB", "50 %", "12 ms", "380 ms", "LP 24", "On"};
+        for (int k = 0; k < 8; k++) {
+            n = 0;
+            b[n++] = 1; b[n++] = k; b[n++] = k == 6 ? 3 : k == 7 ? 2 : 1; b[n++] = k == 3;
+            b[n++] = k == 6 ? 4 : 0; b[n++] = 0x40; b[n++] = 0;
+            b[n++] = 0; b[n++] = 0; b[n++] = 0;
+            int l = strlen(pn[k]);
+            b[n++] = l; memcpy(b + n, pn[k], l); n += l;
+            b[n++] = 6; memcpy(b + n, "Filter", 6); n += 6;
+            host_msg(0x21, b, n);
+            n = 0;
+            b[n++] = 1; b[n++] = k; b[n++] = 16 * k + 20; b[n++] = 0;
+            l = strlen(pv[k]);
+            b[n++] = l; memcpy(b + n, pv[k], l); n += l;
+            host_msg(0x22, b, n);
+        }
+        host_msg(0x23, "\x01\x00\x00\x02\x60\x58", 6);
+    }
+    tick(30);
+    shot("v2_instrument");
+    ev(EV_KNOB_TOUCH, 0, 1);
+    shot("v2_knob_group");
+    ev(EV_KNOB_TOUCH, 0, 0);
+    tick(1500);
+    host_msg(0x2A, "", 0);
+    ev(EV_KEY, 0, 100);
+    ev(EV_KEY, 0, 0);
+    {
+        char b[16] = {play_last_note, 1, 0, 0, 0, 4, 'K', 'i', 'c', 'k'};
+        host_msg(0x25, b, 10);
+    }
+    tick(1600);
+    ev(EV_KEY, 0, 100);
+    shot("v2_key_label");
+    ev(EV_KEY, 0, 0);
+    tick(1600);
+    press(CTL_TRACK);
+    tick(1500);
+    {
+        char b[80];
+        int n = 0;
+        b[n++] = 2; b[n++] = VIEW_VOLUME; b[n++] = 0; b[n++] = 2;
+        b[n++] = 0;
+        b[n++] = 10; memcpy(b + n, "Tracks 1-8", 10); n += 10;
+        host_msg(0x20, b, n);
+        const char *tn[8] = {"Kick", "Snare", "Hats", "Bass", "Keys", "Vox", "Pad", "FX"};
+        for (int k = 0; k < 8; k++) {
+            n = 0;
+            b[n++] = 2; b[n++] = k; b[n++] = 1; b[n++] = 2; b[n++] = 0; b[n++] = 0x64; b[n++] = 0;
+            b[n++] = 0x7F; b[n++] = 0x20; b[n++] = 0x10;
+            int l = strlen(tn[k]);
+            b[n++] = l; memcpy(b + n, tn[k], l); n += l;
+            b[n++] = 0;
+            host_msg(0x21, b, n);
+            n = 0;
+            b[n++] = 2; b[n++] = k; b[n++] = 0x60 - 6 * k; b[n++] = 0; b[n++] = 0;
+            host_msg(0x22, b, n);
+        }
+        host_msg(0x23, "\x00\x00\x02\x08\x70\x66\x50\x40\x6A\x30\x00\x10", 12);
+    }
+    tick(30);
+    shot("v2_volume_meters");
+    press(CTL_SOLO);
+    press(CTL_SOLO);
+    press(CTL_SOLO);
+    tick(1500);
+    {
+        host_msg(0x26, "\x01\x00\x05\x00\x01\x00\x00\x0DTakes: Vox 2", 20);
+        const char *rows[5] = {"Take 1", "Take 2 (comp)", "Take 3", "Take 4", "Take 5"};
+        for (int i = 0; i < 5; i++) {
+            char b[40];
+            int n = 0;
+            b[n++] = 1; b[n++] = 0; b[n++] = i; b[n++] = i == 1 ? 6 : 0;
+            int l = strlen(rows[i]);
+            b[n++] = l; memcpy(b + n, rows[i], l); n += l;
+            host_msg(0x27, b, n);
+        }
+    }
+    tick(30);
+    shot("v2_list");
+    host_msg(0x26, "\x00", 1);
+    {
+        const char *t = "Here are three ideas for the chorus: a lift into the relative minor, a half-time drum feel, or doubling the vocal an octave up.";
+        int len = strlen(t);
+        for (int part = 0; part * 60 < len; part++) {
+            char b[80];
+            int n = 0, l = len - part * 60 < 60 ? len - part * 60 : 60;
+            b[n++] = 1; b[n++] = part; b[n++] = (part + 1) * 60 >= len ? MSG_LAST : MSG_BUSY;
+            b[n++] = l; memcpy(b + n, t + part * 60, l); n += l;
+            host_msg(0x28, b, n);
+        }
+    }
+    tick(30);
+    shot("v2_message");
+    turn(2);
+    shot("v2_message_scrolled");
+    host_msg(0x28, "\x00", 1);
+    pinging = 0;
+    tick(3200);
+    shot("v2_lost");
 
     printf("%d frames in %s\n", frame, outdir);
     return 0;

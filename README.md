@@ -44,6 +44,7 @@ never touched, so the keyboard can always be recovered.
   - mixer
   - a clip launcher grid
 - **Logic, Live and others**: Mackie Control on the "My Kontrol DAW" port. Transport, track names and V-pots work.
+- **Any DAW can build it in**: an open [protocol](docs/protocol.md) puts the DAW's parameter names and values, meters, key, drum names, lists and messages on the keyboard. A [simulator](firmware/sim/README.md) lets DAW developers test without one.
 - **8 presets**, and settings that survive updates.
 
 The [manual](docs/manual.md) explains every button.

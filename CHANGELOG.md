@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Host protocol version 2** ([docs/protocol.md](docs/protocol.md)), so any DAW can build in native support:
+  - The DAW sends each knob's name, group, kind and default once per page, then small value updates with its own value text.
+  - A surface description in JSON tells a DAW what the keyboard has, so new models need no DAW changes.
+  - DAW-defined knob modes, and the DAW can switch the mode when you click a plug-in (System > DAW Sets View).
+  - Track and channel meters.
+  - Smart Play follows the DAW's key (System > DAW Scale).
+  - Drum lane names on screen as you play.
+  - List and message screens for browsers, takes and assistants.
+  - A DAW that stalls is marked lost instead of disappearing, and reconnects by itself.
+  - Version 1 hosts keep working.
+- **Simulator** ([firmware/sim](firmware/sim/README.md)): the real firmware on macOS with the keyboard's MIDI ports, for testing DAW support without a keyboard.
+- **Ableton Live script** speaks version 2.
+
 ## 0.9.0-beta.1
 
 First public beta, for the Komplete Kontrol M32.

@@ -103,3 +103,9 @@ void fake_clear_midi(void)
 }
 
 void kbd_tap(uint8_t modifier, uint8_t key) { (void)modifier; (void)key; }
+
+/* a short surface description; DESCRIBE splits it into several parts */
+const char board_surface_json[] =
+    "{\"schema\":1,\"board\":99,\"name\":\"Host Board\",\"knobs\":{\"count\":8,\"steps_per_turn\":100},"
+    "\"controls\":[{\"id\":0,\"name\":\"shift\",\"kind\":\"button\",\"light\":true},"
+    "{\"id\":9,\"name\":\"play\",\"kind\":\"button\",\"light\":true}]}";

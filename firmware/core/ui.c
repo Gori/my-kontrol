@@ -91,6 +91,8 @@ static const char *const knob_modes[] = {"DAW", "MIDI CC"};
 static const char *const tempo_lights[] = {"Auto", "Always", "Off"};
 static const char *const strum_dirs[] = {"Up", "Down", "Alternate"};
 static const char *const repeat_vels[] = {"Key", "Mod Strip"};
+static const char *const follow_ignore[] = {"Follow", "Ignore"};
+static const char *const yes_no[] = {"Yes", "No"};
 
 static void fmt_scale(int v, char *b) { put_str(b, sp_scales[v].name); }
 static void fmt_bpm(int v, char *b) { put_bpm(b, v); }
@@ -185,6 +187,8 @@ static const item_t preset_items[] = {
 };
 static const item_t system_items[] = {
     {"DAW Control",  K_ENUM, T_U8, &S->daw_mode, 0, DAW_MODE_COUNT - 1, 1, daw_modes},
+    {"DAW Scale",    K_ENUM, T_U8, &S->daw_scale, 0, 1, 1, follow_ignore},
+    {"DAW Sets View", K_ENUM, T_U8, &S->daw_view, 0, 1, 1, yes_no},
     {"Tempo Light",  K_ENUM, T_U8, &S->tempo_light, 0, TEMPO_LIGHT_COUNT - 1, 1, tempo_lights},
     {"Light Level",  K_INT,  T_U8, &S->led_dim, 0, 120, 5},
     {"Contrast",     K_INT,  T_U8, &S->contrast, 0, 255, 16},
@@ -236,7 +240,10 @@ static uint32_t pop_ms;
 static uint32_t blink_ms;
 static uint8_t blink;
 
-static uint16_t seen_host, seen_lcd, seen_tc, seen_note;
+static uint16_t seen_host, seen_lcd, seen_tc, seen_note, seen_key_note;
+static uint32_t key_label_ms;           /* the label of the key just played is on screen */
+static const char *key_label;
+static uint8_t msg_scroll, seen_msg_id;
 static int8_t seen_link = -1;
 
 static int get(const item_t *it)
@@ -391,8 +398,20 @@ void ui_learn_begin(void)
     dirty = 1;
 }
 
+void ui_message_scroll(int d)
+{
+    int s = msg_scroll + d;
+    msg_scroll = s < 0 ? 0 : s > 60 ? 60 : s;    /* the renderer clamps to the text */
+    dirty = 1;
+}
+
 void ui_tick_ms(uint32_t ms)
 {
+    if (key_label_ms) {
+        key_label_ms = ms >= key_label_ms ? 0 : key_label_ms - ms;
+        if (!key_label_ms)
+            dirty = 1;
+    }
     if (pop_ms) {
         pop_ms = ms >= pop_ms ? 0 : pop_ms - ms;
         if (!pop_ms) {
@@ -404,7 +423,8 @@ void ui_tick_ms(uint32_t ms)
     if (blink_ms >= 250) {
         blink_ms = 0;
         blink ^= 1;
-        if (dialog == DLG_LEARN || (depth < 0 && app_link() == LINK_HOST && host.view == VIEW_CLIPS))
+        if (dialog == DLG_LEARN || (depth < 0 && app_link() == LINK_HOST &&
+                                    (host.view == VIEW_CLIPS || (host.msg_id && (host.msg_flags & MSG_BUSY)))))
             dirty = 1;
     }
 }
@@ -642,42 +662,163 @@ static void render_mackie(void)
     }
 }
 
+/* 8 knobs: name, position bar, and (meters) a level line under the bar */
 static void knob_cells(const char names[][HOST_TEXT_LEN / 2 + 1])
 {
+    int meters = host.features & HF_METERS;
     for (int k = 0; k < 8; k++) {
         int x = (k & 3) * 32, y = k < 4 ? 8 : 20;
         gfx_text_n(x, y, names[k], 6, &font_small);
         if (host.knob_flags[k] & 1)
             gfx_bar(x, y + 8, 29, 3, host.knob_pos[k], 127, host.knob_flags[k] & 2);
+        if (meters && host.meter[k])
+            gfx_fill(x, y + 11, (host.meter[k] * 29 + 126) / 127, 1, 1);
     }
+}
+
+static const char *host_title(void)
+{
+    static const char *const names[VIEW_COUNT] = {"Plug-in", "Volume", "Clips", "Pan", "Sends", "Instrument"};
+    const char *n = host_mode_name(host.view);
+    return n ? n : host.view < VIEW_COUNT ? names[host.view] : "Host";
+}
+
+/* top right: what the page shows, or the label of the key just played,
+   or that the host has gone quiet */
+static void host_top_right(int x, int device)
+{
+    char b[26], *p = b, bank[8];
+    int room = (DISP_W - x) / 5;
+    const char *d = host.device, *extra = host.subtitle;
+    if (device && !d[0])
+        d = "None";
+    if (!device && (host.proto < 2 || !d[0]))   /* mixer: v1 hosts leave the device name behind */
+        d = host.subtitle[0] ? host.subtitle : host.track, extra = "";
+    if (host.page_banks > 1) {         /* v2: "2/6" */
+        char *q = put_int(bank, host.page_bank + 1, 0);
+        *q++ = '/';
+        put_int(q, host.page_banks, 0);
+        extra = bank;
+    }
+    if (host.lost)
+        d = "Connection lost", extra = "";
+    else if (key_label_ms && key_label)
+        d = key_label, extra = "";
+    while (*d && p - b < room) *p++ = *d++;
+    if (extra[0] && p - b + 2 < room) {
+        *p++ = ' ';
+        for (d = extra; *d && p - b < room; ) *p++ = *d++;
+    }
+    *p = 0;
+    gfx_text_right(DISP_W, 0, b, &font_small);
+}
+
+static void channel_meter(void)
+{
+    if (!(host.features & HF_METERS))
+        return;
+    int l = host.channel_meter[0] > host.channel_meter[1] ? host.channel_meter[0] : host.channel_meter[1];
+    int h = l * 23 / 127;
+    if (h)
+        gfx_fill(DISP_W - 2, 31 - h, 2, h + 1, 1);
 }
 
 static void render_host_device(void)
 {
-    char b[26];
-    int x = mode_title(host.view == VIEW_INSTRUMENT ? "Instrument" : "Plug-in");
-    /* device name, then the bank ("Operator 2/6") as space allows */
-    char *p = b;
-    const char *d = host.device[0] ? host.device : "None";
-    int room = (DISP_W - x) / 5;
-    while (*d && p - b < room) *p++ = *d++;
-    if (host.subtitle[0] && p - b + 2 < room) {
-        *p++ = ' ';
-        for (d = host.subtitle; *d && p - b < room; ) *p++ = *d++;
-    }
-    *p = 0;
-    gfx_text_right(DISP_W, 0, b, &font_small);
+    host_top_right(mode_title(host_title()), 1);
     knob_cells(host.knob_name);
+    channel_meter();
 }
 
 static void render_host_mixer(void)
 {
-    static const char *const names[VIEW_COUNT] = {"Plug-in", "Volume", "Clips", "Pan", "Sends", "Instrument"};
-    int x = mode_title(names[host.view]);
-    char b[26];
-    copy(b, host.subtitle[0] ? host.subtitle : host.track, (DISP_W - x) / 5 + 1);
-    gfx_text_right(DISP_W, 0, b, &font_small);
+    host_top_right(mode_title(host_title()), 0);
     knob_cells(host.knob_name);
+}
+
+static const host_row_t *cached_row(uint16_t index)
+{
+    for (int i = 0; i < HOST_LIST_CACHE; i++)
+        if (host.rows[i].index == index)
+            return &host.rows[i];
+    return 0;
+}
+
+static void render_host_list(void)
+{
+    char b[26], *p;
+    int x = mode_title(host.list_title[0] ? host.list_title : host_title());
+    if (host.list_total) {
+        p = put_int(b, host.list_cursor + 1, 0);
+        *p++ = '/';
+        put_int(p, host.list_total, 0);
+        if (gfx_text_width(b, &font_small) < DISP_W - x)
+            gfx_text_right(DISP_W, 0, b, &font_small);
+    }
+    if (!host.list_total) {
+        gfx_text(2, 12, "Empty", &font_small);
+        return;
+    }
+    for (int r = 0; r < HOST_LIST_ROWS; r++) {
+        uint16_t i = host.list_first + r;
+        if (i >= host.list_total)
+            break;
+        int y = 8 + r * 8;
+        const host_row_t *row = cached_row(i);
+        p = b;
+        *p++ = !row ? ' ' : row->flags & ROW_PLAYING ? '>' : row->flags & ROW_CHECKED ? '+' : ' ';
+        const char *t = row ? row->text : "...";
+        while (*t && p - b < 23) *p++ = *t++;
+        *p = 0;
+        gfx_text(1, y, b, &font_small);
+        if (row && (row->flags & ROW_FOLDER))
+            gfx_text_right(DISP_W - 1, y, "/", &font_small);
+        if (row && (row->flags & ROW_DISABLED))
+            gfx_hline_dotted(6, y + 4, gfx_text_width(b, &font_small) - 6);
+        if (i == host.list_cursor)
+            gfx_invert(0, y, DISP_W, 8);
+    }
+}
+
+/* the host's message, word-wrapped, 4 lines from msg_scroll */
+#define MSG_COLS (DISP_W / 5)
+
+static int wrap_line(const char *s, int i, int *len)
+{
+    while (s[i] == ' ') i++;
+    int n = 0, cut = -1;
+    while (s[i + n] && s[i + n] != '\n' && n < MSG_COLS) {
+        if (s[i + n] == ' ') cut = n;
+        n++;
+    }
+    int next = i + n;
+    if (s[next] == '\n') next++;
+    else if (s[next] && s[next] != ' ' && cut > 0) next = i + cut, n = cut;
+    *len = n;
+    return next;
+}
+
+static void render_host_message(void)
+{
+    const char *s = host.msg;
+    int lines = 0, i = 0, len;
+    while (s[i]) { i = wrap_line(s, i, &len); lines++; }
+    int max = lines > 4 ? lines - 4 : 0;
+    if (msg_scroll > max) msg_scroll = max;
+    i = 0;
+    for (int l = 0; s[i] && l < msg_scroll + 4; l++) {
+        int start = i;
+        while (s[start] == ' ') start++;
+        i = wrap_line(s, i, &len);
+        if (l >= msg_scroll)
+            gfx_text_n(0, (l - msg_scroll) * 8, s + start, len, &font_small);
+    }
+    if (max) {                          /* scroll position */
+        int h = 32 * 4 / lines, y = (32 - h) * msg_scroll / max;
+        gfx_fill(DISP_W - 1, y, 1, h, 1);
+    }
+    if ((host.msg_flags & MSG_BUSY) && blink)
+        gfx_fill(DISP_W - 4, 0, 3, 3, 1);
 }
 
 static void render_host_clips(void)
@@ -767,6 +908,12 @@ static void render_popup(void)
         int k = pop_knob, link = app_link();
         if (link == LINK_HOST && settings.knob_mode == KNOBS_DAW) {
             title = host.knob_name[k][0] ? host.knob_name[k] : "Not mapped";
+            if (host.group[k][0] && host.knob_name[k][0]) {   /* "Filter Cutoff" */
+                char *p = put_str(t, host.group[k]);
+                *p++ = ' ';
+                copy(p, host.knob_name[k], sizeof t - (p - t));
+                title = t;
+            }
             value = host.knob_value[k];
         } else if (link == LINK_MACKIE && settings.knob_mode == KNOBS_DAW) {
             copy(t, &mcu_lcd[0][k * 7], 8);
@@ -799,6 +946,19 @@ static int screen_changed(void)
     int link = app_link(), changed = 0;
     if (link != seen_link) { seen_link = link; changed = 1; }
     if (link == LINK_HOST && host.gen != seen_host) { seen_host = host.gen; changed = 1; }
+    if (link == LINK_HOST && play_note_gen != seen_key_note) {   /* drum lane names */
+        seen_key_note = play_note_gen;
+        const char *l = host_key_label(play_last_note);
+        if (l) {
+            key_label = l;
+            key_label_ms = 1500;
+            changed = 1;
+        }
+    }
+    if (host.msg_id != seen_msg_id) {
+        seen_msg_id = host.msg_id;
+        msg_scroll = 0;
+    }
     if (link == LINK_MACKIE && (mcu_lcd_gen != seen_lcd || mcu_timecode_gen != seen_tc)) {
         seen_lcd = mcu_lcd_gen;
         seen_tc = mcu_timecode_gen;
@@ -823,7 +983,9 @@ int ui_render(void)
     } else {
         switch (app_link()) {
         case LINK_HOST:
-            if (host.view == VIEW_VOLUME || host.view == VIEW_PAN || host.view == VIEW_SENDS) render_host_mixer();
+            if (host.msg_id) render_host_message();
+            else if (host.list_id) render_host_list();
+            else if (host.view == VIEW_VOLUME || host.view == VIEW_PAN || host.view == VIEW_SENDS) render_host_mixer();
             else if (host.view == VIEW_CLIPS) render_host_clips();
             else render_host_device();
             break;

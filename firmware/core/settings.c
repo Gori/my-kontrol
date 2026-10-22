@@ -105,5 +105,7 @@ void settings_sanitize(settings_t *s)
     clamp_u8(&s->tempo_light, 0, TEMPO_LIGHT_COUNT - 1, TEMPO_LIGHT_AUTO);
     clamp_u8(&s->clock_out, 0, 1, 0);
     clamp_u8(&s->nav_keys, 0, 1, 1);
+    clamp_u8(&s->daw_scale, 0, 1, DAW_YES);
+    clamp_u8(&s->daw_view, 0, 1, DAW_YES);
     clamp_u8(&s->screensaver, 0, settings_screensaver_count - 1, 3);
 }

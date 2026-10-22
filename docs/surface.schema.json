@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Gori/my-kontrol/docs/surface.schema.json",
+  "title": "My Kontrol surface description",
+  "description": "What a keyboard has, sent in answer to DESCRIBE (docs/protocol.md). Hosts should ignore keys they don't know; every key except schema, board and controls is optional.",
+  "type": "object",
+  "required": ["schema", "board", "controls"],
+  "properties": {
+    "schema": { "const": 1 },
+    "board": { "type": "integer", "description": "Board number, as in IDENT" },
+    "name": { "type": "string", "description": "Product name" },
+    "keys": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer" },
+        "lowest_note": { "type": "integer", "description": "MIDI note of the lowest key at octave 0, no transpose" },
+        "velocity": { "type": "boolean" },
+        "aftertouch": { "type": "boolean" },
+        "light_guide": { "type": "boolean", "description": "Every key has its own light" }
+      }
+    },
+    "knobs": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer" },
+        "steps_per_turn": { "type": "integer", "description": "Relative steps in one full turn; hosts default to 100" },
+        "touch": { "type": "boolean" },
+        "layout": { "enum": ["row", "grid"] }
+      }
+    },
+    "encoder": {
+      "type": "object",
+      "properties": {
+        "turn": { "type": "boolean" },
+        "push": { "type": "boolean" },
+        "directions": { "enum": [0, 2, 4] },
+        "touch": { "type": "boolean" }
+      }
+    },
+    "strips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "enum": ["pitch", "mod"] },
+          "touch": { "type": "boolean" },
+          "touch_note": { "type": "integer", "description": "Note on channel 16 sent on touch and release" },
+          "output": { "enum": ["pitch-bend", "cc", "aftertouch"] }
+        }
+      }
+    },
+    "pedals": {
+      "type": "object",
+      "properties": {
+        "jacks": { "type": "integer" },
+        "contacts": { "type": "array", "items": { "enum": ["tip", "ring"] } }
+      }
+    },
+    "screen": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["none", "mono", "color"] },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "text_rows": { "type": "integer" },
+        "list_rows": { "type": "integer" }
+      }
+    },
+    "lights": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["onoff", "levels", "rgb"] },
+        "states": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "controls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "kind"],
+        "properties": {
+          "id": { "type": "integer", "description": "Control ID: the note number it is sent on" },
+          "name": { "type": "string", "description": "Stable machine name" },
+          "label": { "type": "string", "description": "As printed on the hardware" },
+          "kind": { "enum": ["button", "encoder_direction", "encoder_push", "state"] },
+          "light": { "type": "boolean" },
+          "keyboard_owned": {
+            "description": "The keyboard handles this control itself in host mode: always (true), or only in the stated case",
+            "oneOf": [{ "type": "boolean" }, { "enum": ["with shift", "without shift"] }]
+          }
+        }
+      }
+    }
+  }
+}
