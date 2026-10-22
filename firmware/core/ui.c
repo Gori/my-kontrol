@@ -683,8 +683,7 @@ static const char *host_title(void)
     return n ? n : host.view < VIEW_COUNT ? names[host.view] : "Host";
 }
 
-/* top right: what the page shows, or the label of the key just played,
-   or that the host has gone quiet */
+/* top right: what the page shows, or the label of the key just played */
 static void host_top_right(int x, int device)
 {
     char b[26], *p = b, bank[8];
@@ -700,9 +699,7 @@ static void host_top_right(int x, int device)
         put_int(q, host.page_banks, 0);
         extra = bank;
     }
-    if (host.lost)
-        d = "Connection lost", extra = "";
-    else if (key_label_ms && key_label)
+    if (key_label_ms && key_label)
         d = key_label, extra = "";
     while (*d && p - b < room) *p++ = *d++;
     if (extra[0] && p - b + 2 < room) {
@@ -988,6 +985,11 @@ int ui_render(void)
             else if (host.view == VIEW_VOLUME || host.view == VIEW_PAN || host.view == VIEW_SENDS) render_host_mixer();
             else if (host.view == VIEW_CLIPS) render_host_clips();
             else render_host_device();
+            if (host.lost) {                /* the host went quiet: say so over the top line */
+                gfx_fill(0, 0, DISP_W, 8, 0);
+                gfx_text_center(0, "Connection lost", &font_small);
+                gfx_invert(0, 0, DISP_W, 8);
+            }
             break;
         case LINK_MACKIE:
             render_mackie();
