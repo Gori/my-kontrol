@@ -222,6 +222,12 @@ static void test_pages(void)
     uint8_t c[] = {1, 0, 0, 2, 50, 60};
     msg(0x23, c, sizeof c);
     CHECK(host.channel_meter[0] == 50 && host.channel_meter[1] == 60, "channel meter");
+    for (int i = 0; i < 999; i++)
+        host_tick_ms(1);
+    CHECK(host.meter[0] == 10 && host.channel_meter[0] == 50, "meters held under 1 s");
+    msg(0x03, 0, 0);                    /* keep the host alive */
+    host_tick_ms(2);
+    CHECK(host.meter[0] == 0 && host.channel_meter[0] == 0, "meters expire after 1 s");
 }
 
 static void test_modes(void)

@@ -10,10 +10,12 @@ static host_send_fn send;
 static host_notify_fn notify;
 static uint32_t silence_ms, hi_ms;
 static uint16_t describe_part;          /* next DESCRIPTION part, 0xFFFF = none */
+static uint16_t meter_age_ms[2];        /* since the last METER, targets 0 and 1 */
 
 #define HI_EVERY_MS 2000
 #define LOST_MS 3000
 #define GONE_MS 33000                   /* 30 s after being marked lost */
+#define METER_EXPIRE_MS 1000
 #define DESCRIBE_CHUNK 96
 #define SYSEX_OUT 112
 
@@ -40,6 +42,7 @@ static void clear(void)
         host.rows[i].index = HOST_ROW_NONE;
     host.gen = gen + 1;
     describe_part = 0xFFFF;
+    meter_age_ms[0] = meter_age_ms[1] = METER_EXPIRE_MS;
 }
 
 void host_init(host_send_fn s, host_notify_fn n)
@@ -82,9 +85,27 @@ static void describe_tick(void)
     describe_part++;
 }
 
+static void meters_tick(uint32_t ms)
+{
+    for (int t = 0; t < 2; t++) {
+        if (meter_age_ms[t] >= METER_EXPIRE_MS)
+            continue;
+        meter_age_ms[t] += ms;
+        if (meter_age_ms[t] < METER_EXPIRE_MS)
+            continue;
+        if (t == 0)
+            for (int k = 0; k < 8; k++)
+                host.meter[k] = 0;
+        else
+            host.channel_meter[0] = host.channel_meter[1] = 0;
+        host.gen++;
+    }
+}
+
 void host_tick_ms(uint32_t ms)
 {
     describe_tick();
+    meters_tick(ms);
     if (host.connected) {
         silence_ms += ms;
         if (silence_ms >= GONE_MS) {
@@ -314,10 +335,12 @@ static void meter(const uint8_t *d, int len)
     if (n > len - 4)
         n = len - 4;
     if (target == 0 && d[2] == host.page_gen) {
+        meter_age_ms[0] = 0;
         host.meter_kind = kind;
         for (int k = 0; k < 8; k++)
             host.meter[k] = k < n ? d[4 + k] : 0;
     } else if (target == 1) {
+        meter_age_ms[1] = 0;
         host.channel_meter_kind = kind;
         host.channel_meter[0] = n > 0 ? d[4] : 0;
         host.channel_meter[1] = n > 1 ? d[5] : host.channel_meter[0];
@@ -617,6 +640,7 @@ void host_set_view(uint8_t view)
         host.view = view;
         host.page_gen = 0;              /* the old page's messages no longer apply */
         clear_slots();
+        host.channel_meter[0] = host.channel_meter[1] = 0;
     }
     host.gen++;
     if (host.connected)

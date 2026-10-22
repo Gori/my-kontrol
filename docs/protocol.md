@@ -348,7 +348,7 @@ One per knob, after PAGE.
 | knob | byte | 0-based |
 | kind | byte | 0 empty, 1 continuous, 2 toggle, 3 enum |
 | flags | byte | bit 0 bipolar, bit 1 has default |
-| steps | byte | number of enum items, or 0 |
+| steps | byte | number of enum items; 0 for continuous and toggle |
 | default | pos | |
 | colour | colour | for example the track colour in mixer modes |
 | name | string ≤ 24 | parameter or track name |
@@ -356,6 +356,9 @@ One per knob, after PAGE.
 
 A host that cannot tell an enum from a continuous parameter sends kind 1.
 The keyboard draws a bar and the value text either way.
+
+A SLOT may be sent again within the same page, for example after a rename.
+It replaces that knob's metadata and keeps its value.
 
 ### VALUE (host → keyboard, 0x22)
 
@@ -393,8 +396,13 @@ The keyboard draws a bar and the value text either way.
 | 1 gain reduction | 0..127 linear from 0 dB to −24 dB |
 
 - **Kinds.** A host sends only the kinds it has. Gain reduction is optional.
-- **Rate.** The host sends one message per frame per target, at a fixed
-  rate of at most 20 per second. The keyboard may draw less often.
+- **Rate.** The host sends one message per frame per target, at most 20
+  per second. It may skip a frame identical to the last one, but sends at
+  least one frame every 500 ms while any level is above 0. The keyboard may
+  draw less often.
+- **Expiry.** A target's levels drop to 0 one second after its last frame,
+  and on every mode change for target 1. A host that stops metering needs
+  to send nothing.
 
 ## Text and notifications
 
@@ -568,7 +576,8 @@ even with "4D as Keys" on:
 
 - turn is CC 0x30
 - push is note 25
-- left is note 22, which the host uses as "back"
+- left is note 22, which the host uses as "back". At the top level, the host
+  may close the list or do nothing.
 
 The host moves the cursor and sends LIST again, with ROW for any rows the
 keyboard doesn't hold. The keyboard's own menu (Shift + Browser) still works
