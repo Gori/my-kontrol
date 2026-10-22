@@ -87,7 +87,9 @@ Hosts convert from UTF-8.
 5. **MODES.** The host sends `MODES`, and the keyboard answers with `VIEW`,
    giving the current mode.
 6. **Full state.** The host sends its full state for that mode. It sends it
-   again after every `VIEW` and `REFRESH`. Full state includes the "nothing"
+   again after every `VIEW` that changes the mode, and after every
+   `REFRESH`. A `VIEW` that repeats the current mode, for example in answer
+   to MODES, needs nothing more. Full state includes the "nothing"
    forms, so stale content from before cannot survive:
    - `KEYS_CLEAR` and then any `KEY`s
    - `LIST` 0 when no list is open
@@ -550,9 +552,10 @@ candidates, presets. The host owns the cursor.
 - **Overscan.** The host may send rows outside the visible window, up to
   `list_cache` in all. A cursor step then redraws from rows the keyboard
   already has, while the host fills in ahead.
-- **Eviction.** The keyboard drops the rows farthest from the cursor first.
-  If the new row is the farthest, the keyboard drops it. The rule is
-  deterministic, so a host may model the cache to know which rows to send.
+- **Eviction.** When the cache is full, the keyboard drops the row farthest
+  from the cursor. Of two equally far rows it drops the one with the higher
+  index. If that row is the new one, the keyboard drops the new row. The rule
+  is deterministic, so a host may model the cache to know which rows to send.
   A redundant ROW is harmless.
 - **flags:**
   - bit 0 folder

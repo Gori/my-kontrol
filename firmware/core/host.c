@@ -395,7 +395,13 @@ static void list(const uint8_t *d, int len)
     host_string(d, len, &p, host.list_title, sizeof host.list_title, 0);
 }
 
-static unsigned distance(uint16_t a, uint16_t b) { return a > b ? a - b : b - a; }
+/* eviction order: farther from the cursor first, and of two equally far
+   rows the one with the higher index */
+static uint32_t evict_key(uint16_t index)
+{
+    uint16_t c = host.list_cursor;
+    return (uint32_t)(index > c ? index - c : c - index) << 16 | index;
+}
 
 static void row(const uint8_t *d, int len)
 {
@@ -409,17 +415,17 @@ static void row(const uint8_t *d, int len)
     for (int i = 0; i < HOST_LIST_CACHE && at < 0; i++)
         if (host.rows[i].index == HOST_ROW_NONE)
             at = i;
-    if (at < 0) {                       /* full: drop whichever is farthest from the cursor */
-        unsigned far = distance(index, host.list_cursor);
+    if (at < 0) {                       /* full: drop whichever comes first in eviction order */
+        uint32_t far = evict_key(index);
         for (int i = 0; i < HOST_LIST_CACHE; i++) {
-            unsigned dd = distance(host.rows[i].index, host.list_cursor);
-            if (dd > far) {
-                far = dd;
+            uint32_t k = evict_key(host.rows[i].index);
+            if (k > far) {
+                far = k;
                 at = i;
             }
         }
         if (at < 0)
-            return;                     /* the new row is the farthest */
+            return;                     /* the new row would be evicted first */
     }
     host_row_t *r = &host.rows[at];
     r->index = index;

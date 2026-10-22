@@ -312,6 +312,21 @@ static void test_lists(void)
     for (int i = 0; i < HOST_LIST_CACHE; i++)
         has99 |= host.rows[i].index == 99;
     CHECK(!has99, "farthest new row dropped");
+    /* cache now 45..50; 51 pushes out 45, then 54 ties with 46 (both 4 from
+       the cursor) and loses on the higher index */
+    uint8_t t51[20] = {3, 0, 51, 0};
+    n = put(t51, 4, "51");
+    msg(0x27, t51, n);
+    uint8_t t54[20] = {3, 0, 54, 0};
+    n = put(t54, 4, "54");
+    msg(0x27, t54, n);
+    int has45 = 0, has46 = 0, has54 = 0;
+    for (int i = 0; i < HOST_LIST_CACHE; i++) {
+        has45 |= host.rows[i].index == 45;
+        has46 |= host.rows[i].index == 46;
+        has54 |= host.rows[i].index == 54;
+    }
+    CHECK(!has45 && has46 && !has54, "tie: the higher index goes");
     /* another list id drops the rows; id 0 closes */
     l[0] = 4;
     n = put(l, 7, "Other");
