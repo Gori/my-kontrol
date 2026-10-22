@@ -56,8 +56,7 @@ code { font: 0.875em var(--mono); background: var(--soft); padding: 1px 5px; bor
 .shell { max-width: 720px; margin: 0 auto; padding: 72px 24px 40px; }
 
 .intro { margin-bottom: 56px; }
-.title { font-size: clamp(64px, 17vw, 148px); line-height: 0.9; font-weight: 400; letter-spacing: -0.045em; margin: 0 0 28px; margin-left: -0.04em; }
-.title span { color: var(--hot); }
+.title { font-size: clamp(56px, 14vw, 120px); line-height: 0.9; font-weight: 400; letter-spacing: -0.045em; margin: 0 0 28px; margin-left: -0.04em; }
 .kicker { font-style: italic; font-size: 19px; color: var(--dim); margin: 0 0 14px; }
 .lead { font-size: 30px; line-height: 1.25; letter-spacing: -0.01em; line-height: 1.4; color: var(--ink); margin: 0; max-width: 28em; }
 
