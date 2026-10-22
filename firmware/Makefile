@@ -3,6 +3,7 @@
 #   make DEV=1            developer build: event injection over USB (tools/mktest.py)
 #   make BOARD=<name>     another keyboard, see docs/porting.md
 #   make test             host tests (no hardware)
+#   make sim              macOS simulator on CoreMIDI virtual ports (sim/README.md)
 # Dependencies: git submodules in lib/ (git submodule update --init), python3
 
 BOARD ?= m32
@@ -54,8 +55,11 @@ $(OUT).bin: $(OUT).elf
 test:
 	$(MAKE) -C test
 
+sim:
+	$(MAKE) -C sim
+
 clean:
 	rm -rf build
 
 -include $(DEPS)
-.PHONY: all test clean
+.PHONY: all test sim clean
