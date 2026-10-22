@@ -81,8 +81,9 @@ code { font: 0.875em var(--mono); background: var(--soft); padding: 1px 5px; bor
   background: #111111;
   color: var(--ink);
   border-radius: 12px;
-  padding: 32px;
+  padding: 16px 32px;
 }
+.views .actions { margin-top: 14px; }
 .views .drop { border-color: #555; }
 h3 { font-size: 28px; font-weight: 400; letter-spacing: -0.01em; margin: 0 0 6px; outline: none; }
 p { margin: 0 0 12px; }
