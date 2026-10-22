@@ -4,7 +4,8 @@
 
 import unittest
 
-from fakes import Clock, FakeClip, FakeSong, Wire
+from fakes import (AUDIO_EFFECT, INSTRUMENT, MIDI_EFFECT, Clock, FakeChain, FakeClip,  # noqa: F401
+                   FakeDevice, FakeRack, FakeSong, Wire)
 from MyKontrol import protocol as p
 from MyKontrol.engine import Engine
 from screen import Screen
@@ -91,7 +92,7 @@ class Connection(unittest.TestCase):
         self.assertEqual(h.text(p.TEXT_TRACK), "Track 1")
         self.assertEqual(h.text(p.TEXT_DEVICE), "Dev 1.1")
         self.assertEqual(h.text(p.TEXT_BANK), "Bank 1")
-        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Bank 1/1")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "1/1")
         for k in range(8):
             self.assertEqual(h.text(p.TEXT_KNOB_LABEL + k), "Dev 1.1 P%d" % (k + 1))
             self.assertEqual(h.text(p.TEXT_KNOB_VALUE + k), "0.50")
@@ -166,6 +167,15 @@ class Connection(unittest.TestCase):
         h.settle()
         self.assertEqual(h.text(p.TEXT_SUBTITLE), "Send A")
 
+    def test_view_5_is_instrument(self):
+        h = Harness()
+        h.connect()
+        h.view(p.VIEW_PLUGIN)
+        h.send(p.view(5))
+        self.assertEqual(h.engine.controller.view_id, p.VIEW_INSTRUMENT)
+        h.send(p.view(9))                              # unknown: ignored
+        self.assertEqual(h.engine.controller.view_id, p.VIEW_INSTRUMENT)
+
     def test_bye_on_stop(self):
         h = Harness()
         h.connect()
@@ -173,44 +183,114 @@ class Connection(unittest.TestCase):
         self.assertEqual(h.sync()[-1], p.bye())
 
 
-class DeviceView(unittest.TestCase):
+class InstrumentView(unittest.TestCase):
 
-    def test_knob_changes_parameter_and_sends_only_that(self):
+    def test_plain_instrument_after_midi_effect(self):
         h = Harness()
-        h.connect()
-        param = h.song.visible_tracks[0].devices[0].parameters[1]
-        out = h.send(p.knob_turn(0, 20))
-        self.assertAlmostEqual(param.value, 0.6)
-        self.assertEqual(sorted(sysex_cmds(out)), [p.CMD_TEXT, p.CMD_PARAM])
-        self.assertEqual(h.text(p.TEXT_KNOB_VALUE), "0.60")
+        track = h.song.visible_tracks[0]
+        track.devices.insert(0, FakeDevice("Arp", type=MIDI_EFFECT))
+        h.connect()                                    # instrument view is the default
+        self.assertEqual(h.engine.controller.view_id, p.VIEW_INSTRUMENT)
+        self.assertEqual(h.text(p.TEXT_DEVICE), "Dev 1.1")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "1/1")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Dev 1.1 P1")
 
-    def test_banks_and_devices(self):
-        h = Harness(params_per_device=20)
+    def test_rack_macros_first_then_nested_instrument(self):
+        h = Harness()
+        synth = FakeDevice("Synth", n_params=12, type=INSTRUMENT)
+        inner_rack = FakeRack("Inner", [FakeChain([FakeDevice("EQ"), synth])])
+        rack = FakeRack("Keys Rack", [FakeChain([FakeDevice("Utility")]),
+                                      FakeChain([inner_rack])])
+        h.song.visible_tracks[0].devices = [FakeDevice("Chord", type=MIDI_EFFECT), rack]
         h.connect()
-        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Bank 1/3")
+        self.assertEqual(h.text(p.TEXT_DEVICE), "Keys Rack")
+        self.assertEqual(h.text(p.TEXT_BANK), "Macros")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "1/3")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 7), "Macro 8")
         h.press(p.CTL_PRESET_DOWN)
         h.settle()
-        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Bank 2/3")
+        self.assertEqual(h.text(p.TEXT_DEVICE), "Synth")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "2/3")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Synth P1")
+        h.press(p.CTL_PRESET_DOWN)
+        h.press(p.CTL_PRESET_DOWN)                     # stops at the last bank
+        h.settle()
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "3/3")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 3), "Synth P12")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 4), "")
+        # Shift + Preset is a no-op in this view.
+        h.press(p.CTL_PRESET_UP, shift=True)
+        h.settle()
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "3/3")
+
+    def test_drum_rack_uses_selected_pad(self):
+        h = Harness()
+        kick = FakeDevice("Kick", type=INSTRUMENT)
+        snare = FakeDevice("Snare", type=INSTRUMENT)
+        drums = FakeRack("Drums", [FakeChain([kick]), FakeChain([snare])], drum=True)
+        drums.view.selected_drum_pad = type("Pad", (), {"chains": [drums.chains[1]]})()
+        h.song.visible_tracks[0].devices = [drums]
+        h.connect()
+        self.assertEqual(h.text(p.TEXT_BANK), "Macros")
+        h.press(p.CTL_PRESET_DOWN)
+        h.settle()
+        self.assertEqual(h.text(p.TEXT_DEVICE), "Snare")
+
+    def test_no_instrument(self):
+        h = Harness()
+        h.song.visible_tracks[0].devices = [FakeDevice("Reverb")]
+        h.connect()
+        self.assertEqual(h.text(p.TEXT_BANK), "No instrument")
+        self.assertEqual(h.screen.params[0], (0, 0))
+
+
+class PluginView(unittest.TestCase):
+
+    def test_banks_and_device_navigation(self):
+        h = Harness(params_per_device=20)
+        h.connect()
+        h.view(p.VIEW_PLUGIN)
+        self.assertEqual(h.text(p.TEXT_DEVICE), "Dev 1.1")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "1/3")
+        h.press(p.CTL_PRESET_DOWN)
+        h.settle()
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "2/3")
         self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Dev 1.1 P9")
         h.press(p.CTL_PRESET_DOWN)
         h.settle()
         self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 3), "Dev 1.1 P20")
         self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 4), "")
         self.assertEqual(h.screen.params[4], (0, 0))
-        # Shift+Preset down / 4D down: next device; its bank starts at 1.
+        # Shift + Preset down: next device, selected in Live; its bank starts at 1.
         h.press(p.CTL_PRESET_DOWN, shift=True)
         h.settle()
+        self.assertIs(h.song.visible_tracks[0].view.selected_device,
+                      h.song.visible_tracks[0].devices[1])
         self.assertEqual(h.text(p.TEXT_DEVICE), "Dev 1.2")
-        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Bank 1/3")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "1/3")
         # Back to the first device: its bank was remembered.
-        h.press(p.CTL_NAV_UP)
+        h.press(p.CTL_PRESET_UP, shift=True)
         h.settle()
         self.assertEqual(h.text(p.TEXT_DEVICE), "Dev 1.1")
-        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Bank 3/3")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "3/3")
+
+    def test_nested_device_steps_through_its_chain(self):
+        h = Harness()
+        a, b = FakeDevice("Comp"), FakeDevice("Sat")
+        rack = FakeRack("FX", [FakeChain([a, b])])
+        rack.type = 2
+        h.song.visible_tracks[0].devices.append(rack)
+        h.song.view.select_device(a)
+        h.connect()
+        h.view(p.VIEW_PLUGIN)
+        h.press(p.CTL_PRESET_DOWN, shift=True)
+        h.settle()
+        self.assertEqual(h.text(p.TEXT_DEVICE), "Sat")
 
     def test_track_selection_and_device_toggle(self):
         h = Harness()
         h.connect()
+        h.view(p.VIEW_PLUGIN)
         h.send(p.encoder_turn(1))
         h.settle()
         self.assertEqual(h.text(p.TEXT_TRACK), "Track 2")
@@ -221,16 +301,30 @@ class DeviceView(unittest.TestCase):
         self.assertEqual(h.song.visible_tracks[0].devices[0].parameters[0].value, 0)
         self.assertEqual(h.screen.notifications[-1], ("Dev 1.1", "Off"))
 
-    def test_selection_change_redraws_at_once(self):
+
+class Knobs(unittest.TestCase):
+
+    def test_knob_changes_parameter_and_sends_only_that(self):
         h = Harness()
         h.connect()
-        h.song.view.selected_track = h.song.visible_tracks[2]
-        h.engine.selection_changed()      # no tick
-        h.sync()
-        self.assertEqual(h.text(p.TEXT_TRACK), "Track 3")
-        self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Dev 3.1 P1")
+        param = h.song.visible_tracks[0].devices[0].parameters[1]
+        out = h.send(p.knob_turn(0, 20))
+        self.assertAlmostEqual(param.value, 0.6)
+        self.assertEqual(sorted(sysex_cmds(out)), [p.CMD_TEXT, p.CMD_PARAM])
+        self.assertEqual(h.text(p.TEXT_KNOB_VALUE), "0.60")
 
-    def test_stepped_parameter_needs_several_steps(self):
+    def test_value_text_keeps_up_during_a_full_refresh(self):
+        # Right after IDENT the outbox has ~60 messages queued; the knob in
+        # use must still get its value text out in the same call.
+        h = Harness(n_tracks=8)
+        h.engine.start()
+        h.engine.receive(p.hi())
+        h.engine.receive(p.ident(view=p.VIEW_CLIPS))
+        h.sync()
+        out = h.send(p.knob_turn(5, 10))
+        self.assertIn(p.text(p.TEXT_KNOB_VALUE + 5, "0.90 dB"), out)
+
+    def test_stepped_parameter_accumulates(self):
         h = Harness()
         h.connect()
         param = h.song.visible_tracks[0].devices[0].parameters[1]
@@ -240,6 +334,23 @@ class DeviceView(unittest.TestCase):
         self.assertEqual(param.value, 0)
         h.send(p.knob_turn(0, 1))
         self.assertEqual(param.value, 1)
+        h.send(p.knob_turn(0, 9))                      # 2 items, 1 step left over
+        self.assertEqual(param.value, 3)
+        h.send(p.knob_turn(0, -2))                     # direction change eats the rest
+        self.assertEqual(param.value, 3)
+        h.send(p.knob_turn(0, -40))
+        self.assertEqual(param.value, 0)               # clamped
+        h.settle()
+        self.assertEqual(h.screen.params[0][1], p.PARAM_MAPPED | p.PARAM_STEPPED)
+
+    def test_selection_change_redraws_at_once(self):
+        h = Harness()
+        h.connect()
+        h.song.view.selected_track = h.song.visible_tracks[2]
+        h.engine.selection_changed()      # no tick
+        h.sync()
+        self.assertEqual(h.text(p.TEXT_TRACK), "Track 3")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Dev 3.1 P1")
 
     def test_touch_brackets_a_gesture(self):
         h = Harness()
@@ -410,7 +521,7 @@ class ClipView(unittest.TestCase):
         h = Harness()
         h.connect()
         h.view(p.VIEW_CLIPS)
-        h.view(p.VIEW_DEVICE)
+        h.view(p.VIEW_PLUGIN)
         self.assertEqual(h.highlights[-1], (-1, -1, -1, -1, False))
 
 
@@ -420,12 +531,19 @@ class Transport(unittest.TestCase):
         h = Harness()
         h.connect()
         s = h.song
+        s.current_song_time = 8.0
         h.press(p.CTL_PLAY)
         self.assertTrue(s.is_playing)
-        h.press(p.CTL_PLAY)
+        h.press(p.CTL_PLAY)                            # Play does not toggle
+        self.assertTrue(s.is_playing)
+        h.press(p.CTL_PLAY, shift=True)                # back to start
+        self.assertEqual(s.current_song_time, 0.0)
+        s.current_song_time = 8.0
+        h.press(p.CTL_STOP)
         self.assertFalse(s.is_playing)
-        h.press(p.CTL_PLAY, shift=True)
-        self.assertEqual(s.calls[-1], "continue_playing")
+        self.assertEqual(s.current_song_time, 8.0)
+        h.press(p.CTL_STOP)                            # stopped: back to start
+        self.assertEqual(s.current_song_time, 0.0)
         h.press(p.CTL_STOP, shift=True)
         self.assertEqual(s.calls[-1], "stop_all_clips")
         h.press(p.CTL_REC)
@@ -447,9 +565,13 @@ class Transport(unittest.TestCase):
         t = s.visible_tracks[0]
         self.assertTrue(t.mute and t.solo)
         self.assertFalse(t.arm)
+        self.assertEqual(h.screen.notifications[-1], ("Track 1", "Solo On"))
         h.settle()
         self.assertEqual(h.screen.lights[p.CTL_REC], p.LIGHT_ON)
-        self.assertEqual(h.screen.lights[p.CTL_MUTE], p.LIGHT_ON)
+        self.assertEqual(h.screen.lights[p.CTL_MUTE], p.LIGHT_DIM)   # mode button
+        h.press(p.CTL_REC)
+        h.settle()
+        self.assertEqual(h.screen.lights[p.CTL_REC], p.LIGHT_BLINK)  # session record armed
         flags = h.screen.transport.flags
         self.assertTrue(flags & p.TRANSPORT_LOOP and flags & p.TRANSPORT_METRONOME)
 

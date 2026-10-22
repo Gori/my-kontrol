@@ -5,8 +5,9 @@
 #
 # Button map (docs/protocol.md, "Suggested host behaviour"):
 #
-#   Play      play / stop             Shift: continue
-#   Stop      stop                    Shift: stop all clips
+#   Play      play                    Shift: back to start
+#   Stop      stop; when stopped,     Shift: stop all clips
+#             back to start
 #   Rec       arrangement record      Shift: session record
 #   Loop      loop
 #   Metro     metronome
@@ -59,20 +60,24 @@ class TransportComponent(object):
     def _toggle(self, name):
         lu.set_attr(self._song, name, not getattr(self._song, name))
 
+    def _to_start(self):
+        lu.set_attr(self._song, "current_song_time", 0.0)
+
     def _play(self, shift):
         song = self._song
         if shift:
-            lu.attempt(song.continue_playing)
-        elif song.is_playing:
-            lu.attempt(song.stop_playing)
-        else:
+            self._to_start()
+        elif not song.is_playing:
             lu.attempt(song.start_playing)
 
     def _stop(self, shift):
+        song = self._song
         if shift:
-            lu.attempt(self._song.stop_all_clips)
+            lu.attempt(song.stop_all_clips)
+        elif song.is_playing:
+            lu.attempt(song.stop_playing)
         else:
-            lu.attempt(self._song.stop_playing)
+            self._to_start()
 
     def _rec(self, shift):
         self._toggle("session_record" if shift else "record_mode")
@@ -99,15 +104,17 @@ class TransportComponent(object):
         if getattr(song, "can_capture_midi", False) and lu.attempt(song.capture_midi):
             self._display.notify("Capture", "MIDI")
 
-    def _mute(self, shift):
+    def _toggle_track(self, name, label):
         track = lu.selected_track(self._song)
-        if lu.has_mute(self._song, track):
-            lu.set_attr(track, "mute", not track.mute)
+        if lu.has_mute(self._song, track) and lu.set_attr(track, name, not getattr(track, name)):
+            self._display.notify(lu.safe_name(track),
+                                 "%s %s" % (label, "On" if getattr(track, name) else "Off"))
+
+    def _mute(self, shift):
+        self._toggle_track("mute", "Mute")
 
     def _solo(self, shift):
-        track = lu.selected_track(self._song)
-        if lu.has_mute(self._song, track):
-            lu.set_attr(track, "solo", not track.solo)
+        self._toggle_track("solo", "Solo")
 
     # -- feedback -----------------------------------------------------------
 
@@ -146,18 +153,14 @@ class TransportComponent(object):
         d.light(p.CTL_LOOP, on_dim(song.loop))
         d.light(p.CTL_METRO, on_dim(song.metronome))
         d.light(p.CTL_TEMPO, p.LIGHT_DIM)   # the device flashes it on each beat
-        d.light(p.CTL_UNDO, p.LIGHT_DIM if (song.can_undo or song.can_redo) else p.LIGHT_OFF)
+        d.light(p.CTL_UNDO, p.LIGHT_DIM if song.can_undo else p.LIGHT_OFF)
         d.light(p.CTL_QUANTIZE,
                 p.LIGHT_DIM if lu.selected_clip(song) is not None else p.LIGHT_OFF)
         d.light(p.CTL_IDEAS,
                 p.LIGHT_ON if getattr(song, "can_capture_midi", False) else p.LIGHT_OFF)
-        track = lu.selected_track(song)
-        if lu.has_mute(song, track):
-            d.light(p.CTL_MUTE, on_dim(track.mute))
-            d.light(p.CTL_SOLO, on_dim(track.solo))
-        else:
-            d.light(p.CTL_MUTE, p.LIGHT_OFF)
-            d.light(p.CTL_SOLO, p.LIGHT_OFF)
+        # M / S are the knob-mode buttons first: always available.
+        d.light(p.CTL_MUTE, p.LIGHT_DIM)
+        d.light(p.CTL_SOLO, p.LIGHT_DIM)
 
     def render(self):
         self.render_transport()

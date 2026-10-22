@@ -19,11 +19,18 @@ from collections import deque
 
 class Outbox(object):
 
-    def __init__(self, send, max_messages=20, max_bytes=960, window=0.1):
+    # Bulk messages (priority >= bulk_priority) may only use the window up to
+    # `reserve` messages / `reserve_bytes` short of the limit, so a knob
+    # being turned during a full refresh still gets through at once.
+    def __init__(self, send, max_messages=20, max_bytes=960, window=0.1,
+                 reserve=4, reserve_bytes=160, bulk_priority=1):
         self._send = send
         self.max_messages = max_messages
         self.max_bytes = max_bytes
         self.window = window
+        self.reserve = reserve
+        self.reserve_bytes = reserve_bytes
+        self.bulk_priority = bulk_priority
         self._sent = {}      # key -> bytes the device has
         self._pending = {}   # key -> [priority, seq, bytes, is_state]
         self._seq = 0
@@ -92,11 +99,18 @@ class Outbox(object):
             return 0
         order = sorted(self._pending.items(), key=lambda kv: (kv[1][0], kv[1][1]))
         sent = 0
-        for key, (_, _, message, is_state) in order:
-            if len(self._recent) >= self.max_messages:
-                break
-            if self._recent_bytes + len(message) > self.max_bytes:
-                break
+        for key, (priority, _, message, is_state) in order:
+            bulk = priority >= self.bulk_priority
+            max_messages = self.max_messages - (self.reserve if bulk else 0)
+            max_bytes = self.max_bytes - (self.reserve_bytes if bulk else 0)
+            if len(self._recent) >= max_messages:
+                if bulk:
+                    break
+                continue
+            if self._recent_bytes + len(message) > max_bytes:
+                if bulk:
+                    break
+                continue
             del self._pending[key]
             self._send(message)
             if is_state:

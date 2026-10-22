@@ -39,13 +39,41 @@ class FakeParam(object):
         self.gestures.append("end")
 
 
+INSTRUMENT, AUDIO_EFFECT, MIDI_EFFECT = 1, 2, 4
+
+
 class FakeDevice(object):
 
-    def __init__(self, name, n_params=8, class_name="FakeDevice"):
+    def __init__(self, name, n_params=8, class_name="FakeDevice", type=AUDIO_EFFECT,
+                 param_names=None):
         self.name = name
         self.class_name = class_name
+        self.type = type
+        self.can_have_chains = False
+        self.canonical_parent = None
+        names = param_names or ["%s P%d" % (name, i + 1) for i in range(n_params)]
         self.parameters = [FakeParam("Device On", 1, 0, 1, quantized=True)] + [
-            FakeParam("%s P%d" % (name, i + 1), 0.5) for i in range(n_params)]
+            FakeParam(n, 0.5) for n in names]
+
+
+class FakeChain(object):
+
+    def __init__(self, devices):
+        self.devices = list(devices)
+        for d in self.devices:
+            d.canonical_parent = self
+
+
+class FakeRack(FakeDevice):
+
+    def __init__(self, name, chains, drum=False):
+        super(FakeRack, self).__init__(
+            name, class_name="DrumGroupDevice" if drum else "InstrumentGroupDevice",
+            type=INSTRUMENT, param_names=["Macro %d" % i for i in range(1, 17)])
+        self.can_have_chains = True
+        self.can_have_drum_pads = drum
+        self.chains = list(chains)
+        self.view = _Obj(selected_chain=None, selected_drum_pad=None)
 
 
 class FakeClip(object):
@@ -96,6 +124,8 @@ class FakeTrack(object):
     def __init__(self, name, n_scenes=0, devices=(), armable=True):
         self.name = name
         self.devices = list(devices)
+        for d in self.devices:
+            d.canonical_parent = self
         self.view = _Obj(selected_device=self.devices[0] if self.devices else None)
         self.mute = False
         self.solo = False
@@ -132,8 +162,15 @@ class FakeSongView(object):
         self.highlighted_clip_slot = None
 
     def select_device(self, device):
+        # Live selects nested devices too; the owning track is the one whose
+        # chain (directly or through racks) contains the device.
+        def contains(devices):
+            for d in devices:
+                if d is device or any(contains(c.devices) for c in getattr(d, "chains", ())):
+                    return True
+            return False
         for track in self._song.all_tracks():
-            if device in track.devices:
+            if contains(track.devices):
                 track.view.selected_device = device
                 self.selected_track = track
 
@@ -146,7 +183,8 @@ class FakeSong(object):
                        for i in range(n_scenes)]
         self.visible_tracks = [
             FakeTrack("Track %d" % (i + 1), n_scenes,
-                      [FakeDevice("Dev %d.%d" % (i + 1, d + 1), params_per_device)
+                      [FakeDevice("Dev %d.%d" % (i + 1, d + 1), params_per_device,
+                                  type=INSTRUMENT if d == 0 else AUDIO_EFFECT)
                        for d in range(devices_per_track)])
             for i in range(n_tracks)]
         self.tracks = self.visible_tracks
@@ -165,6 +203,7 @@ class FakeSong(object):
         self.loop = False
         self.metronome = False
         self.tempo = 120.0
+        self.current_song_time = 0.0
         self.signature_numerator = 4
         self.can_undo = True
         self.can_redo = False

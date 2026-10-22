@@ -56,10 +56,32 @@ class _MidiMap(object, metaclass=_StubMeta):
         return True
 
 
+class _LiveSubmoduleFinder(object):
+    """Lets `from Live.Clip import ...` work against the stub."""
+
+    def find_spec(self, name, path=None, target=None):
+        if not name.startswith("Live."):
+            return None
+        import importlib.machinery
+        return importlib.machinery.ModuleSpec(name, self)
+
+    def create_module(self, spec):
+        module = _StubModule(spec.name)
+        setattr(sys.modules["Live"], spec.name.split(".", 1)[1], module)
+        return module
+
+    def exec_module(self, module):
+        pass
+
+
 def _install_live_stub():
+    if isinstance(sys.modules.get("Live"), _StubModule):
+        return
     live = _StubModule("Live")
+    live.__path__ = []          # a package, so Live.<sub> imports resolve
     live.MidiMap = _MidiMap
     sys.modules["Live"] = live
+    sys.meta_path.insert(0, _LiveSubmoduleFinder())
     for path in (SCRIPTS, FUTURE):
         if path not in sys.path:
             sys.path.insert(0, path)
@@ -154,6 +176,34 @@ class LiveGlue(unittest.TestCase):
         self.assertIn(caps.SCRIPT, ports[3][caps.PROPSKEY])
         self.assertNotIn(caps.SCRIPT, ports[0][caps.PROPSKEY])
 
+    def test_live_bank_definitions(self):
+        # Live's own tables, resolved by our code: Analog's "Mix" bank has
+        # conditional slots ("LFO1 Speed" if synced to Hertz, else "LFO1 SncRate").
+        from MyKontrol.surface import _live_banks
+        from fakes import FakeDevice
+        banks = _live_banks()
+        definition = banks._definitions["UltraAnalog"]
+        names = set()
+        for bank in definition.values():
+            for slot in bank["Parameters"]:
+                for attr in ("_default_parameter_name",):
+                    names.add(getattr(slot, attr, slot))
+                for cond in getattr(slot, "_conditions", []):
+                    names.add(cond["ResultingName"])
+                    names.update(c["ConditionName"] for c in cond["ConditionsListName"])
+        names.discard("")
+        dev = FakeDevice("Analog", class_name="UltraAnalog", param_names=sorted(names))
+        bank_names = banks.names(dev)
+        self.assertEqual(bank_names[1], "Oscillators")
+        self.assertEqual([p.name for p in banks.parameters(dev, 1)][:2], ["OSC1 Level", "OSC1 Octave"])
+        mix = bank_names.index("Mix")
+        sync = next(p for p in dev.parameters if p.name == "LFO1 Sync")
+        sync.__class__ = type("SyncParam", (sync.__class__,), {"__str__": lambda self: "Hertz"})
+        self.assertEqual(banks.parameters(dev, mix)[3].name, "LFO1 Speed")
+        sync.__class__ = type("SyncParam", (sync.__class__,), {"__str__": lambda self: "Sync"})
+        self.assertEqual(banks.parameters(dev, mix)[3].name, "LFO1 SncRate")
+        self.assertGreater(len(banks._definitions), 50)
+
     def test_lifecycle_through_real_framework(self):
         surface, c, song = self.make()
         self.assertEqual(c.sent, [p.hello()])
@@ -181,6 +231,7 @@ class LiveGlue(unittest.TestCase):
         self.assertTrue(song.is_playing)
         surface.receive_midi(p.knob_turn(0, 10))
         self.assertAlmostEqual(song.visible_tracks[0].devices[0].parameters[1].value, 0.55)
+        self.clock.advance(0.1)
         song.view.selected_track = song.visible_tracks[1]
         surface._on_selected_track_changed()     # what _Framework's listener calls
         screen = Screen()

@@ -10,8 +10,9 @@
 
 from . import protocol as p
 
-PRIO_TRANSPORT = 0
-PRIO_LIGHT = 1
+PRIO_TRANSPORT = 0    # beat flashes
+PRIO_HOT = 0          # the knob being turned / touched: name and value
+PRIO_LIGHT = 1        # 1 and up is "bulk" traffic; see Outbox.reserve
 PRIO_NOTIFY = 1
 PRIO_GRID = 2
 PRIO_PARAM = 2
@@ -22,12 +23,13 @@ class Display(object):
 
     def __init__(self, outbox):
         self._outbox = outbox
+        self.hot_knob = None   # set by the controller on knob turn / touch
 
-    def text(self, field, value):
-        self._outbox.put(("text", field), p.text(field, value), PRIO_TEXT)
+    def text(self, field, value, priority=PRIO_TEXT):
+        self._outbox.put(("text", field), p.text(field, value), priority)
 
-    def param(self, knob, value, flags):
-        self._outbox.put(("param", knob), p.param(knob, value, flags), PRIO_PARAM)
+    def param(self, knob, value, flags, priority=PRIO_PARAM):
+        self._outbox.put(("param", knob), p.param(knob, value, flags), priority)
 
     def light(self, control, state):
         if control in p.DEVICE_OWNED_CONTROLS:
@@ -46,10 +48,12 @@ class Display(object):
         self._outbox.post(("notify",), p.notify(title, value), PRIO_NOTIFY)
 
     def knob(self, knob, label, value_text, value, flags):
-        """Label, value text and bar for one knob in one call."""
-        self.text(p.TEXT_KNOB_LABEL + knob, label)
-        self.text(p.TEXT_KNOB_VALUE + knob, value_text)
-        self.param(knob, value, flags)
+        """Label, value text and bar for one knob in one call. The knob in
+        use jumps the queue so its value text keeps up with turning."""
+        hot = knob == self.hot_knob
+        self.text(p.TEXT_KNOB_LABEL + knob, label, PRIO_HOT if hot else PRIO_TEXT)
+        self.text(p.TEXT_KNOB_VALUE + knob, value_text, PRIO_HOT if hot else PRIO_PARAM)
+        self.param(knob, value, flags, PRIO_HOT if hot else PRIO_PARAM)
 
     def empty_knob(self, knob):
         self.knob(knob, "", "", 0, 0)

@@ -190,29 +190,42 @@ keyboard keys (arrows, Return, Space, = / -), so the host follows the DAW's
 own selection (in Live, the clip view cursor is the highlighted clip slot).
 The 4D rows below apply when the user turns "4D as Keys" off.
 
-| Control | Device | Volume / Pan | Sends | Clips |
-|---|---|---|---|---|
-| Knobs | 8 parameters of the selected device bank | volume / pan of 8 tracks | sends A-H of the selected track | volume of the 8 grid tracks |
-| Labels (TEXT 0x10+) | parameter names | track names | send names | track names |
-| 4D turn | select track | select track | select track | cursor up / down one scene |
-| 4D left / right | select track | select track | select track | move cursor (scrolls past the edge) |
-| 4D up / down | previous / next device | select track | select track | move cursor |
-| 4D push | toggle device on/off | arm selected track | arm selected track | launch clip (Shift: launch scene) |
-| Preset ↑ / ↓ | previous / next parameter bank | tracks 1-8 / 9-16 / ... | — | page scenes by 4 |
-| Shift + Preset ↑ / ↓ | previous / next device | — | — | — |
+| Control | Instrument (5) | Plug-in (0) | Volume (1) / Pan (3) | Sends (4) | Clips (2) |
+|---|---|---|---|---|---|
+| Knobs | the selected track's instrument: a Rack's 8 macros first, then the instrument inside it | Live's selected device | volume / pan of 8 tracks | sends A-H of the selected track | volume of the 8 grid tracks |
+| Labels (TEXT 0x10+) | parameter names | parameter names | track names | return track names | track names |
+| Values (TEXT 0x18+) | Live's value text | Live's value text | dB / "12L", "C", "40R" | dB | dB |
+| TEXT 0x01 / 0x02 / 0x03 | device / bank name / "2/6" | device / bank name / "2/6" | — / — / "Tracks 9-16" | — / — / "Sends A-D" | — / — / tracks and scenes shown |
+| Preset ↑ / ↓ | previous / next bank | previous / next bank | tracks 1-8 / 9-16 / ... | — | page scenes by 4 |
+| Shift + Preset ↑ / ↓ | — | previous / next device in its chain (selected in Live) | — | — | — |
+| 4D turn | select track | select track | select track | select track | cursor up / down one scene |
+| 4D left / right | select track | select track | select track | select track | move cursor (scrolls past the edge) |
+| 4D up / down | previous / next bank | previous / next device | select track | select track | move cursor |
+| 4D push | instrument on/off | device on/off | arm selected track | arm selected track | launch clip (Shift: launch scene) |
+
+Banks come from Live's own bank definitions where they exist (Operator,
+Wavetable, Drift, Simpler, Analog, racks, Max for Live devices), else 8
+parameters at a time in parameter order. PARAM flags: bipolar when min =
+-max (pan-like), stepped for quantized parameters. A stepped parameter moves
+one item per few knob steps (sub-steps accumulate); a continuous one moves
+1/200 of its range per step. The knob being turned or touched jumps the
+queue, so its value text follows the turn without delay.
 
 | Button | Press | Shift + press |
 |---|---|---|
-| Play | play / stop | continue |
-| Stop | stop | stop all clips |
+| Play | play | back to start |
+| Stop | stop; when stopped, back to start | stop all clips |
 | Rec | arrangement record | session record |
 | Loop | loop | — |
 | Metro | metronome | — |
 | Tempo | tap tempo | — |
 | Undo | undo | redo |
-| Quantize | quantize the selected clip | — |
+| Quantize | quantize the selected clip (popup shows the grid) | — |
 | Ideas | capture MIDI | — |
 | Mute | (device: previous knob mode) | mute the selected track |
 | Solo | (device: next knob mode) | solo the selected track |
 
-The Ideas light is on while capture is available.
+Lights: Play on while playing; Rec on while arrangement recording, blinking
+while only session record is armed; Loop and Metro show their state; Undo,
+Quantize, Stop, Tempo, Mute and Solo are dim when available; Ideas is on
+while capture is possible.

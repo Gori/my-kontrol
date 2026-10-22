@@ -29,38 +29,54 @@ if it is still installed, can create its own "Komplete Kontrol ... DAW" ports.
 
 ## Controls
 
-Plug-in, Track and Browser switch to the device, volume and clip views.
-Mute and Solo step back and forth through the knob modes: device, volume,
-pan, sends. The keyboard handles both itself.
+The knobs have five modes plus the clip view. M and S step through the modes
+(default order: Instrument, Plug-in, Volume, Pan, Sends). The keyboard also
+has direct buttons for them:
 
-| Control | Device | Volume / Pan | Sends | Clips |
-|---|---|---|---|---|
-| Knobs | 8 parameters of the selected device | volume / pan of 8 tracks | sends A-H of the selected track | volume of the 8 grid tracks |
-| 4D turn | select track | select track | select track | cursor up / down one scene |
-| 4D left / right | select track | select track | select track | move cursor |
-| 4D up / down | previous / next device | select track | select track | move cursor |
-| 4D push | device on/off | arm track | arm track | launch clip (Shift: scene) |
-| Preset ↑ / ↓ | parameter bank (Shift: device) | tracks 1-8 / 9-16 / ... | | page 4 scenes |
+| Button | Mode | With Shift |
+|---|---|---|
+| Plug-in | Instrument | Plug-in |
+| Track | Volume | Sends |
+| Browser | Clips | keyboard menu |
+
+| Mode | Knobs | Preset ↑ / ↓ | Shift + Preset ↑ / ↓ |
+|---|---|---|---|
+| Instrument | the selected track's instrument. A Rack's 8 macros come first, then the instrument inside it | bank | |
+| Plug-in | the device selected in Live | bank | previous / next device |
+| Volume, Pan | 8 tracks | tracks 1-8, 9-16, ... | |
+| Sends | sends A-H of the selected track | | |
+| Clips | volume of the 8 grid tracks | page scenes by 4 | |
+
+Built-in devices (Operator, Wavetable, Drift, Simpler, Analog...) get Live's
+own banks, with names like "Oscillators" or "Filter Envelopes". Plug-ins get
+their parameters 8 at a time. The screen shows the device, bank name and
+position ("2/6"). Touch a knob to see its full name and value.
 
 | Button | Press | Shift + press |
 |---|---|---|
-| Play | play / stop | continue |
-| Stop | stop | stop all clips |
+| Play | play | back to start |
+| Stop | stop; when stopped, back to start | stop all clips |
 | Rec | arrangement record | session record |
 | Loop, Metro | loop, metronome | |
 | Tempo | tap tempo | |
 | Undo | undo | redo |
-| Quantize | quantize selected clip | |
+| Quantize | quantize the selected clip | |
 | Ideas | capture MIDI | |
-| Mute, Solo | previous / next knob mode | mute / solo selected track |
+| M, S | knob mode − / + | mute / solo the selected track |
 
-By default the keyboard types the 4D encoder into Live as arrow keys,
-Return and Space ("4D as Keys" setting), so it moves Live's own selection.
-The display and the clip view cursor follow that selection. The 4D rows
-above apply when "4D as Keys" is off.
+**4D encoder.** By default the keyboard types it into Live as keys: arrows,
+Return, Space ("4D as Keys" setting). It moves Live's own selection, and
+the screen and the clip-view cursor follow. With "4D as Keys" off it works
+like this:
 
-Touching a knob starts an automation gesture, so recorded automation is one
-clean move.
+| 4D | Instrument | Plug-in | Volume / Pan / Sends | Clips |
+|---|---|---|---|---|
+| Turn, left / right | select track | select track | select track | move cursor |
+| Up / down | bank | previous / next device | select track | move cursor |
+| Push | instrument on/off | device on/off | arm track | launch clip (Shift: scene) |
+
+Touching a knob also starts an automation gesture, so recorded automation is
+one clean move.
 
 ## Without hardware: the simulator
 
@@ -100,7 +116,8 @@ for `MyKontrol`.
 | `outbox.py` | sends only changed fields, at most 20 messages / 960 bytes per 100 ms |
 | `session.py` | HI / HELLO / IDENT / PING / BYE |
 | `engine.py` | everything above wired together; what the tests drive |
-| `controller.py`, `transport.py`, `*_view.py` (device, mixer = volume/pan, sends, clip) | what the controls do, what the display shows |
+| `banks.py` | parameter banks from Live's bank definitions |
+| `controller.py`, `transport.py`, `*_view.py` (device = instrument/plug-in, mixer = volume/pan, sends, clip) | what the controls do, what the display shows |
 | `surface.py` | the Live `ControlSurface` |
 
 ## Protocol notes

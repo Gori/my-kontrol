@@ -6,11 +6,10 @@
 
 from . import protocol as p
 from .transport import TransportComponent
-from .device_view import DeviceView
+from .device_view import InstrumentView, PluginView
 from .mixer_view import MixerView
 from .sends_view import SendsView
 from .clip_view import ClipView
-from .liveutil import DefaultBanks
 
 
 class Controller(object):
@@ -21,13 +20,14 @@ class Controller(object):
         self.shift = False
         self.transport = TransportComponent(song, display)
         self.views = {
-            p.VIEW_DEVICE: DeviceView(song, display, banks or DefaultBanks()),
+            p.VIEW_INSTRUMENT: InstrumentView(song, display, banks),
+            p.VIEW_PLUGIN: PluginView(song, display, banks),
             p.VIEW_VOLUME: MixerView(song, display),
             p.VIEW_PAN: MixerView(song, display, pan=True),
             p.VIEW_SENDS: SendsView(song, display),
             p.VIEW_CLIPS: ClipView(song, display, highlight),
         }
-        self.view_id = p.VIEW_DEVICE
+        self.view_id = p.VIEW_INSTRUMENT     # the keyboard's first knob mode
         self.view.enter()
 
     @property
@@ -41,6 +41,7 @@ class Controller(object):
             self.view.exit()
             self.view_id = view_id
             self.view.enter()
+            self._display.hot_knob = None
         return True
 
     def handle(self, event):
@@ -53,9 +54,12 @@ class Controller(object):
                     self.view.press(event.control, self.shift)
         elif isinstance(event, p.KnobTurn):
             if 0 <= event.knob < 8:
+                self._display.hot_knob = event.knob
                 self.view.turn(event.knob, event.delta, self.shift)
         elif isinstance(event, p.KnobTouch):
             if 0 <= event.knob < 8:
+                if event.touched:
+                    self._display.hot_knob = event.knob
                 self.view.touch(event.knob, event.touched, self.shift)
         elif isinstance(event, p.EncoderTurn):
             self.view.encoder(event.delta, self.shift)

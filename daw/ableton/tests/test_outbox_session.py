@@ -62,6 +62,15 @@ class OutboxTests(unittest.TestCase):
             self.box.put(i, (0,) * 200, 0)
         self.assertEqual(self.box.flush(0.0), 4)      # 4 * 200 <= 960
 
+    def test_reserve_keeps_room_for_urgent_messages(self):
+        box = Outbox(self.sent.append, max_messages=20, reserve=4, bulk_priority=1)
+        for i in range(40):
+            box.put(i, (i,), 3)
+        self.assertEqual(box.flush(0.0), 16)            # bulk stops 4 short
+        box.put("hot", (99,), 0)
+        self.assertEqual(box.flush(0.01), 1)            # urgent still goes out
+        self.assertEqual(self.sent[-1], (99,))
+
     def test_priority_order(self):
         self.box.put("text", (3,), 3)
         self.box.put("light", (1,), 1)

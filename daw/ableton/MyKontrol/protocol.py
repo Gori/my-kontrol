@@ -44,14 +44,15 @@ CMD_GRID = 0x14
 CMD_NOTIFY = 0x15
 
 # Views, as carried by VIEW
-VIEW_DEVICE = 0
+VIEW_PLUGIN = 0          # the selected device
 VIEW_VOLUME = 1
 VIEW_CLIPS = 2
 VIEW_PAN = 3
 VIEW_SENDS = 4
-VIEWS = (VIEW_DEVICE, VIEW_VOLUME, VIEW_CLIPS, VIEW_PAN, VIEW_SENDS)
-VIEW_NAMES = {VIEW_DEVICE: "device", VIEW_VOLUME: "volume", VIEW_CLIPS: "clips",
-              VIEW_PAN: "pan", VIEW_SENDS: "sends"}
+VIEW_INSTRUMENT = 5      # the selected track's instrument
+VIEWS = (VIEW_PLUGIN, VIEW_VOLUME, VIEW_CLIPS, VIEW_PAN, VIEW_SENDS, VIEW_INSTRUMENT)
+VIEW_NAMES = {VIEW_PLUGIN: "plug-in", VIEW_VOLUME: "volume", VIEW_CLIPS: "clips",
+              VIEW_PAN: "pan", VIEW_SENDS: "sends", VIEW_INSTRUMENT: "instrument"}
 
 # Boards, as carried by IDENT
 BOARD_NAMES = {1: "Komplete Kontrol M32"}

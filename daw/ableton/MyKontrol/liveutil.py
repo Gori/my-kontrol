@@ -125,14 +125,23 @@ def selected_device(song):
         return None
 
 
+def device_siblings(song, device):
+    """The devices next to `device` in its chain (or on the track)."""
+    parent = getattr(device, "canonical_parent", None) if device is not None else None
+    devices = getattr(parent, "devices", None)
+    if devices is None:
+        track = selected_track(song)
+        devices = track.devices if track is not None else []
+    return list(devices)
+
+
 def select_relative_device(song, delta):
-    track = selected_track(song)
-    if track is None:
-        return False
-    devices = list(track.devices)
+    """Select the previous / next device in the selected device's chain."""
+    current = selected_device(song)
+    devices = device_siblings(song, current)
     if not devices:
         return False
-    idx = index_of(devices, selected_device(song))
+    idx = index_of(devices, current)
     if idx < 0:
         new = 0 if delta > 0 else len(devices) - 1
     else:
@@ -143,14 +152,93 @@ def select_relative_device(song, delta):
 
 
 def device_neighbour_exists(song, delta):
-    track = selected_track(song)
-    if track is None:
-        return False
-    devices = list(track.devices)
-    idx = index_of(devices, selected_device(song))
+    current = selected_device(song)
+    devices = device_siblings(song, current)
+    idx = index_of(devices, current)
     if idx < 0:
         return bool(devices)
     return 0 <= idx + delta < len(devices)
+
+
+INSTRUMENT_TYPE = 1    # Live.Device.DeviceType.instrument
+
+
+def is_instrument(device):
+    try:
+        kind = device.type
+    except Exception:
+        return False
+    try:
+        return int(kind) == INSTRUMENT_TYPE
+    except Exception:
+        return str(kind).split(".")[-1] == "instrument"
+
+
+def is_rack(device):
+    try:
+        return bool(device.can_have_chains)
+    except Exception:
+        return False
+
+
+def _first_instrument(devices):
+    for device in devices:
+        if is_instrument(device):
+            return device
+    return None
+
+
+def _rack_chains(rack):
+    """Chains of a rack, the one Live shows as selected first."""
+    chains = list(getattr(rack, "chains", ()) or ())
+    view = getattr(rack, "view", None)
+    preferred = None
+    try:
+        if getattr(rack, "can_have_drum_pads", False):
+            pad = view.selected_drum_pad
+            pad_chains = list(pad.chains) if pad is not None else []
+            preferred = pad_chains[0] if pad_chains else None
+        else:
+            preferred = view.selected_chain
+    except Exception:
+        preferred = None
+    if preferred is not None:
+        chains = [preferred] + [c for c in chains if not same(c, preferred)]
+    return chains
+
+
+def rack_instrument(rack, depth=0):
+    """The instrument playing inside a rack, searching nested racks."""
+    if depth > 8:
+        return None
+    for chain in _rack_chains(rack):
+        inner = _first_instrument(getattr(chain, "devices", ()))
+        if inner is None:
+            continue
+        if is_rack(inner):
+            found = rack_instrument(inner, depth + 1)
+            if found is not None:
+                return found
+            continue
+        return inner
+    return None
+
+
+def track_instrument(track):
+    """(rack, instrument) for the track's first instrument. rack is set when
+    that first instrument is an Instrument or Drum Rack; instrument is the
+    device playing inside it (or the plain instrument). Either may be None."""
+    if track is None:
+        return None, None
+    try:
+        first = _first_instrument(track.devices)
+    except Exception:
+        return None, None
+    if first is None:
+        return None, None
+    if is_rack(first):
+        return first, rack_instrument(first)
+    return None, first
 
 
 def device_on_parameter(device):
@@ -167,23 +255,6 @@ def toggle_device(device):
     if set_attr(on, "value", new):
         return on.value > on.min
     return None
-
-
-class DefaultBanks(object):
-    """Parameter banks without Live's bank tables: the parameters after
-    "Device On", eight at a time. The script prefers Live's own tables
-    (_Generic.Devices) when they are available; see surface.py."""
-
-    def banks(self, device):
-        params = list(device.parameters)[1:] if device is not None else []
-        out = []
-        for i in range(0, len(params), 8):
-            bank = params[i:i + 8]
-            out.append(bank + [None] * (8 - len(bank)))
-        return out
-
-    def names(self, device):
-        return ["Bank %d" % (i + 1) for i in range(len(self.banks(device)))]
 
 
 # -- parameters -------------------------------------------------------------
@@ -217,8 +288,13 @@ def parameter_position(param):
 
 
 def parameter_text(param):
+    """Live's own value text, e.g. "-6.0 dB", "440 Hz", "12L"."""
     if param is None:
         return ""
+    try:
+        return param.str_for_value(param.value)
+    except Exception:
+        pass
     try:
         return str(param)
     except Exception:

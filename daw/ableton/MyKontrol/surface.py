@@ -27,28 +27,16 @@ _FORWARD_CCS = list(range(p.KNOB_CC_BASE, p.KNOB_CC_BASE + 8)) + [p.ENCODER_CC]
 
 
 def _live_banks():
-    """Live's own parameter bank tables (best-of banks for built-in devices,
-    rack macros, Max for Live banks), with our plain fallback."""
-    from .liveutil import DefaultBanks
-    try:
-        from _Generic.Devices import parameter_banks, parameter_bank_names
-    except Exception:
-        return DefaultBanks()
-
-    class LiveBanks(DefaultBanks):
-        def banks(self, device):
-            try:
-                return [list(bank) for bank in parameter_banks(device)]
-            except Exception:
-                return DefaultBanks.banks(self, device)
-
-        def names(self, device):
-            try:
-                return list(parameter_bank_names(device))
-            except Exception:
-                return DefaultBanks.names(self, device)
-
-    return LiveBanks()
+    """Banks backed by Live's own bank definitions (the tables Push and the
+    other bundled scripts use), or plain 8-at-a-time banks without them."""
+    from .banks import Banks
+    for module in ("ableton.v3.control_surface", "ableton.v2.control_surface.default_bank_definitions"):
+        try:
+            definitions = __import__(module, fromlist=["BANK_DEFINITIONS"]).BANK_DEFINITIONS
+            return Banks(definitions)
+        except Exception:
+            continue
+    return Banks()
 
 
 class MyKontrol(ControlSurface):

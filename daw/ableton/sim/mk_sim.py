@@ -40,15 +40,18 @@ RATE_LIMIT = 20
 BYTE_LIMIT = 1024
 
 CONTROL_BY_NAME = {name: cid for cid, name in p.CONTROL_NAMES.items()}
-VIEW_BY_NAME = {"device": p.VIEW_DEVICE, "plugin": p.VIEW_DEVICE,
+VIEW_BY_NAME = {"instrument": p.VIEW_INSTRUMENT, "inst": p.VIEW_INSTRUMENT,
+                "plugin": p.VIEW_PLUGIN, "plug-in": p.VIEW_PLUGIN, "device": p.VIEW_PLUGIN,
                 "volume": p.VIEW_VOLUME, "track": p.VIEW_VOLUME,
                 "pan": p.VIEW_PAN, "sends": p.VIEW_SENDS,
                 "clips": p.VIEW_CLIPS, "clip": p.VIEW_CLIPS, "browser": p.VIEW_CLIPS}
 # Knob modes that Mute / Solo (without Shift) step through, keyboard default.
-MODE_ORDER = (p.VIEW_DEVICE, p.VIEW_VOLUME, p.VIEW_PAN, p.VIEW_SENDS)
-# View buttons the keyboard handles itself.
-VIEW_BUTTONS = {p.CTL_PLUGIN: p.VIEW_DEVICE, p.CTL_TRACK: p.VIEW_VOLUME,
-                p.CTL_BROWSER: p.VIEW_CLIPS}
+MODE_ORDER = (p.VIEW_INSTRUMENT, p.VIEW_PLUGIN, p.VIEW_VOLUME, p.VIEW_PAN, p.VIEW_SENDS)
+# View buttons the keyboard handles itself: (view, view with Shift).
+# Shift+Browser opens the keyboard's menu (None: no view change).
+VIEW_BUTTONS = {p.CTL_PLUGIN: (p.VIEW_INSTRUMENT, p.VIEW_PLUGIN),
+                p.CTL_TRACK: (p.VIEW_VOLUME, p.VIEW_SENDS),
+                p.CTL_BROWSER: (p.VIEW_CLIPS, None)}
 
 HELP = """\
 commands (controls by name or ID; knobs are 1-8):
@@ -58,7 +61,9 @@ commands (controls by name or ID; knobs are 1-8):
   t <knob> [on|off]    touch a knob (no arg: touch and release)
   e <delta>            turn the 4D encoder
   up down left right push    4D buttons (prefix "shift" to hold Shift)
-  view device|volume|pan|sends|clips   change view (sends VIEW)
+  view instrument|plugin|volume|pan|sends|clips   change view (sends VIEW)
+  b plugin / b shift+plugin / b track / b shift+track / b browser
+                       view buttons, as on the keyboard
   b mute / b solo      previous / next knob mode (handled by the keyboard);
                        b shift+mute / b shift+solo go to the host
   refresh              send REFRESH
@@ -75,7 +80,7 @@ class Simulator(object):
         self.lock = threading.RLock()
         self.screen = Screen()
         self.host_mode = False
-        self.view = p.VIEW_DEVICE
+        self.view = p.VIEW_INSTRUMENT
         self.shift = False
         self.last_rx = 0.0
         self.last_hi = 0.0
@@ -99,7 +104,8 @@ class Simulator(object):
     def _open_existing(port, name, kind):
         names = port.get_ports()
         for i, n in enumerate(names):
-            if name in n:
+            # Never attach to a real keyboard: it would answer the host too.
+            if name in n and "M32" not in n:
                 port.open_port(i)
                 return
         sys.exit("no MIDI %s matching %r; have: %s" % (kind, name, names))
@@ -187,8 +193,9 @@ class Simulator(object):
             if control == p.CTL_SHIFT:
                 self.shift = pressed
             elif control in VIEW_BUTTONS:
-                if pressed and not self.shift:   # Shift+Browser: device menu
-                    self.set_view(VIEW_BUTTONS[control])
+                target = VIEW_BUTTONS[control][1 if self.shift else 0]
+                if pressed and target is not None:
+                    self.set_view(target)
                 return True
             elif control in (p.CTL_MUTE, p.CTL_SOLO) and not self.shift:
                 if pressed:
