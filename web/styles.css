@@ -6,6 +6,12 @@
   font-display: swap;
 }
 @font-face {
+  font-family: "ABC Gaisyr";
+  src: url("fonts/ABCGaisyr-Italic.woff2") format("woff2");
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
   font-family: "ABC Gaisyr Mono";
   src: url("fonts/ABCGaisyrMono-Regular.woff2") format("woff2");
   font-display: swap;
