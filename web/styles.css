@@ -80,6 +80,7 @@ code { font: 0.875em var(--mono); background: var(--soft); padding: 1px 5px; bor
   --good: #5fd982;
   background: #111111;
   color: var(--ink);
+  border-radius: 2px;
   padding: 20px 32px 14px;
 }
 .views .actions { margin-top: 14px; }
