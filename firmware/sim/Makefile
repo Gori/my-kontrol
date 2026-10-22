@@ -2,6 +2,7 @@
 #   make            build/mk-sim
 #   make probe      build/mk-probe, a minimal host that checks HI / HELLO / DESCRIBE
 #   make check      run mk-sim headless and probe it
+#   make check-stdio  scripted session over mk-sim --stdio --fake-time (no CoreMIDI)
 
 CC = cc
 CFLAGS = -O2 -g -std=gnu11 -Wall -Wextra -Wno-missing-field-initializers -I. -I../core
@@ -44,8 +45,11 @@ check: $(BUILD)/mk-sim $(BUILD)/mk-probe
 	@$(BUILD)/mk-sim --no-ui --log $(BUILD)/check.log & pid=$$!; \
 	$(BUILD)/mk-probe; status=$$?; kill $$pid; wait $$pid; exit $$status
 
+check-stdio: $(BUILD)/mk-sim
+	sh check_stdio.sh $(BUILD)/mk-sim
+
 clean:
 	rm -rf $(BUILD)
 
 -include $(OBJS:.o=.d)
-.PHONY: all probe check clean
+.PHONY: all probe check check-stdio clean

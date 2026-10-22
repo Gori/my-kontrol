@@ -4,8 +4,7 @@
 Komplete Kontrol M32 running My Kontrol. It talks to DAWs over CoreMIDI
 virtual ports with the same names as the USB device, and shows the OLED and
 the button lights in a terminal. Use it to build and test a host for the
-protocol ([protocol-v2.md](../../docs/protocol-v2.md),
-[protocol.md](../../docs/protocol.md)) without the hardware. Mackie Control
+protocol ([protocol.md](../../docs/protocol.md)) without the hardware. Mackie Control
 works on the same port too.
 
 ## Build
@@ -14,6 +13,7 @@ works on the same port too.
 make -C firmware sim          # firmware/sim/build/mk-sim
 make -C firmware/sim probe    # firmware/sim/build/mk-probe
 make -C firmware/sim check    # run mk-sim headless and probe it
+make -C firmware/sim check-stdio   # scripted session over --stdio, no CoreMIDI
 ```
 
 Needs the Xcode command line tools and python3 (for `tools/surface2c.py`).
@@ -44,6 +44,40 @@ A button keystroke is a 100 ms press. The light grid under the screen shows
 each button's key and its light (off / dim / on). Arrow keys and Return that
 the real keyboard would type as a USB keyboard (System > 4D as Keys) are shown
 as "typed:" and not sent anywhere.
+
+## Scripted tests: --stdio
+
+`mk-sim --stdio` opens no MIDI ports and draws no UI. It reads commands from
+stdin, one per line, and prints every complete message the keyboard sends as
+`out <cable> <hex bytes>`, flushed per line and in order with the command
+replies. Cable 0 is Keys, 1 is DAW. With `--fake-time` time stands still
+except on `tick`, so a run is deterministic; without it time runs in real
+time.
+
+| Command | |
+|---|---|
+| `in <cable> <hex bytes>` | a MIDI message arriving, for example `in 1 F0 7D 4D 4B 03 F7`; the keyboard handles it at once |
+| `tick <ms>` | run the keyboard for that long (`--fake-time` only) |
+| `event <type> <id> <value>` | a control, as `app_event()`; types from `core/hal.h`: 0 key, 1 button, 2 encoder, 3 knob, 4 knob touch, 5 strip, 6 pedal |
+| `screen` | `screen`, 32 lines of 128 `#` / `.`, then `end` |
+| `find <text>` | `found <x> <y> <font>` if the screen shows the text in one of the keyboard's fonts (plain or `inverted`), else `notfound` |
+| `lights` | `lights`, one `<control id> <level 0..255>` line per control 0–25, then `end` |
+| `quit` | exit; so does the end of input |
+
+Blank lines and lines starting with `#` are skipped; anything else unknown
+answers `error ...`. The screen shows the boot splash for the first 1200 ms,
+and the lights update every 10 ms of keyboard time. The keyboard answers some
+messages from its main loop, for example `VIEW` after `MODES`, so tick a few
+ms before expecting those. `check_stdio.sh` is a worked example:
+
+```sh
+firmware/sim/build/mk-sim --stdio --fake-time <<'EOF'
+tick 1300
+in 1 F0 7D 4D 4B 00 02 00 01 03 53 69 6D 03 31 2E 30 F7
+event 4 0 1
+find Not mapped
+EOF
+```
 
 ## Pointing a DAW at it
 

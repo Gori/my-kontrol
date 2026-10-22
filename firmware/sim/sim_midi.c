@@ -6,7 +6,9 @@
    cut into USB-MIDI packets and queued. The main thread feeds the queue to
    midi_rx_packet(), so the core only ever runs on one thread.
    Out: the core's USB-MIDI queue is turned back into bytes and sent with
-   MIDIReceived(), a whole sysex per MIDIPacket. */
+   MIDIReceived(), a whole sysex per MIDIPacket.
+   With --stdio there are no ports: sim.c injects input bytes and the output
+   is printed as "out <cable> <hex>" lines. */
 #include <pthread.h>
 #include <string.h>
 #include <CoreMIDI/CoreMIDI.h>
@@ -15,6 +17,7 @@
 
 FILE *sim_log;
 uint32_t sim_midi_in, sim_midi_out;
+int sim_midi_stdio;
 
 static const char *const port_name[PORT_COUNT] = {"My Kontrol Keys", "My Kontrol DAW"};
 
@@ -115,6 +118,14 @@ static void read_proc(const MIDIPacketList *list, void *ref, void *src_ref)
     pthread_mutex_unlock(&rx_lock);
 }
 
+void sim_midi_inject(uint8_t cable, const uint8_t *b, int n)
+{
+    pthread_mutex_lock(&rx_lock);
+    for (int i = 0; i < n; i++)
+        pack_byte(cable & 1, b[i]);
+    pthread_mutex_unlock(&rx_lock);
+}
+
 /* ---------- USB-MIDI packets -> messages (main thread) ---------- */
 
 typedef struct {
@@ -205,6 +216,14 @@ void sim_midi_tx(void)
             continue;
         if (m > 0)
             log_sysex("out", port, msg, n);
+        if (sim_midi_stdio) {
+            printf("out %d", port);
+            for (int i = 0; i < n; i++)
+                printf(" %02X", msg[i]);
+            printf("\n");
+            fflush(stdout);
+            continue;
+        }
         MIDIPacket *next = MIDIPacketListAdd(list[port], sizeof lists[port], cur[port], 0, n, msg);
         if (!next) {                         /* list full: send it and start another */
             MIDIReceived(src[port], list[port]);
