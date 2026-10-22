@@ -11,6 +11,7 @@
   - Drum lane names on screen as you play.
   - List and message screens for browsers, takes and assistants.
   - A DAW that stalls is marked lost instead of disappearing, and reconnects by itself.
+  - A DAW can take the 4D encoder for itself; System > 4D as Keys is now Auto, Always or Off.
   - Version 1 hosts keep working.
 - **Simulator** ([firmware/sim](firmware/sim/README.md)): the real firmware on macOS with the keyboard's MIDI ports, for testing DAW support without a keyboard.
 - **Ableton Live script** speaks version 2.

@@ -558,9 +558,12 @@ static int is_nav(uint8_t ctl)
     return ctl >= CTL_NAV_UP && ctl <= CTL_NAV_PUSH;
 }
 
+/* 4D as Keys: Auto leaves the 4D to a host that handles it (HELLO features) */
 static int nav_keys(int link)
 {
-    return link != LINK_NONE && settings.nav_keys;
+    if (link == LINK_NONE || settings.nav_keys == NAV_OFF)
+        return 0;
+    return settings.nav_keys == NAV_ALWAYS || link != LINK_HOST || !(host.features & HF_ENCODER);
 }
 
 static void button(uint8_t ctl, int down)

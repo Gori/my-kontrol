@@ -140,6 +140,7 @@ own behaviour for everything that is missing.
 | 5 | message screen |
 | 6 | colours |
 | 7 | clip grid |
+| 8 | the 4D encoder: the host handles it as protocol messages |
 
 A host that sets bit 0 never sends the TEXT fields it replaces, and mixing
 the two is undefined. TEXT 0x00 (track name) and 0x04 (position) stay in
@@ -217,11 +218,15 @@ Everything is on MIDI channel 16.
   combinations.
 - **Knob resolution** belongs to the host. It applies its own taper and step
   size, using the steps-per-turn figure from the surface description.
-- **The 4D encoder** usually doesn't reach the host as protocol messages. By
-  default ("4D as Keys" on) the keyboard types it into the focused window as
-  USB keyboard keys: arrows, Return, Space, = / -. The host then follows its
-  own selection. The 4D does reach the host while a list or message is open,
-  or when the user turns "4D as Keys" off.
+- **The 4D encoder.** By default ("4D as Keys" on Auto) the keyboard types
+  the 4D into the focused window as USB keyboard keys: arrows, Return,
+  Space, = / -. The host then follows its own selection.
+  - A host that sets feature bit 8 gets the 4D as protocol messages instead.
+    It should do so only if it gives the 4D something better than the keys
+    would, such as selecting tracks without needing focus.
+  - The 4D always reaches the host while a list or message is open.
+  - The user can override with "4D as Keys": Always (keys even for a host
+    with bit 8) or Off (always protocol messages).
 
 ### Control IDs
 

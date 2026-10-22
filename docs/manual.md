@@ -92,7 +92,9 @@ and regions in the arranger, notes in the piano roll, the browser.
 | Shift + push | Space (play / stop) |
 
 The first time you plug it in, macOS shows the Keyboard Setup Assistant; close it.
-**System > 4D as Keys > Off** puts the 4D back on the DAW protocol.
+A DAW with built-in support may take the 4D for itself instead. **System > 4D
+as Keys** sets this: Auto (keys, unless the DAW takes the 4D), Always (keys)
+or Off (the DAW's protocol).
 
 **Buttons**
 
@@ -184,6 +186,7 @@ Open the menu with 4D push, or with Browser (Shift + Browser in host mode).
 | DAW Control | auto, off |
 | DAW Scale | follow: Smart Play uses the DAW's key; ignore |
 | DAW Sets View | yes: the DAW may switch the knob mode; no |
+| 4D as Keys | auto: arrow keys, unless the DAW takes the 4D; always; off |
 | Tempo Light | auto, always, off |
 | Light Level | brightness of unlit buttons |
 | Contrast, Screen Saver | |
