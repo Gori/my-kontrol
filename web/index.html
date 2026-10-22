@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>My Kontrol Installer</title>
   <meta name="description" content="Install My Kontrol, open-source firmware for the Komplete Kontrol M32, or restore NI's firmware, from your browser.">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0c0c0b">
-  <link rel="preload" href="fonts/DepartureMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='8' width='28' height='16' rx='3' fill='%23222'/%3E%3Crect x='6' y='12' width='9' height='5' rx='1' fill='%23fff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="js/app.js"></script>
@@ -15,27 +15,24 @@
 <body>
   <a class="skip" href="#main">Skip to installer</a>
   <main id="main" class="shell">
-    <header class="mast">
-      <span class="mark">My Kontrol</span>
-      <span class="mast-r">Installer <span class="dot" aria-hidden="true"></span> M32</span>
+    <header class="intro">
+      <h1 class="title">My Kontrol</h1>
+      <p class="lead">Open-source firmware for the Komplete Kontrol M32. The keyboard works on its own, without any software, plugins or drivers.</p>
     </header>
 
-    <figure class="panel" aria-hidden="true">
-      <canvas id="oled" width="512" height="128"></canvas>
-    </figure>
-
-    <ol class="steps" id="steps" aria-label="Progress">
-      <li data-step="connect"><span class="led"></span><span class="lbl">Connect</span></li>
-      <li data-step="choose"><span class="led"></span><span class="lbl">Choose</span></li>
-      <li data-step="flash"><span class="led"></span><span class="lbl">Install</span></li>
-      <li data-step="done"><span class="led"></span><span class="lbl">Done</span></li>
+    <h2 class="section">Install</h2>
+    <ol class="steps sr-only" id="steps" aria-label="Progress">
+      <li data-step="connect">Connect</li>
+      <li data-step="choose">Choose</li>
+      <li data-step="flash">Install</li>
+      <li data-step="done">Done</li>
     </ol>
 
     <section class="views" aria-label="Installer">
 
         <!-- Browser without WebUSB -->
         <div id="view-unsupported" class="view" hidden>
-          <h1 id="card-title-unsupported" tabindex="-1">This browser can't talk to USB devices</h1>
+          <h3 id="card-title-unsupported" tabindex="-1">This browser can't talk to USB devices</h3>
           <p>Installing firmware needs WebUSB, which only <strong>Chrome</strong>, <strong>Edge</strong> and <strong>Opera</strong> on a computer have.
             Open this page in one of them. Safari and Firefox don't support it, and neither do phones.</p>
           <p class="muted" id="unsupported-detail"></p>
@@ -43,18 +40,17 @@
 
         <!-- Step 1 -->
         <div id="view-connect" class="view" hidden>
-          <h1 tabindex="-1">Plug in your M32.</h1>
-          <p class="lede">Straight into the computer, no hub. Quit Komplete Kontrol, Native Access and your DAW first.</p>
+          <h3 tabindex="-1">Plug in your M32</h3>
+          <p class="lede">Connect it directly and quit any music apps.</p>
           <div class="actions">
             <button type="button" class="btn primary" id="btn-connect">Connect</button>
-            <span class="hint">Pick “Komplete Kontrol M32” or “My Kontrol M32”</span>
           </div>
           <p class="note" id="connect-note" role="status" aria-live="polite"></p>
         </div>
 
         <!-- Step 2 -->
         <div id="view-choose" class="view" hidden>
-          <h1 tabindex="-1">Choose.</h1>
+          <h3 tabindex="-1">Choose firmware</h3>
           <p class="device-line"><span id="device-name">Komplete Kontrol M32</span> <span class="device-meta" id="device-meta"></span></p>
           <p class="banner info" id="dfu-banner" hidden>Your keyboard is in update mode and waiting for firmware.
             That's normal after an interrupted update. Pick something to install and it will start right away.</p>
@@ -121,13 +117,13 @@
 
           <div class="actions">
             <button type="button" class="btn primary" id="btn-install" disabled>Install</button>
-            <button type="button" class="btn ghost" id="btn-change">Use a different keyboard</button>
+            <button type="button" class="btn ghost" id="btn-change" hidden>Use a different keyboard</button>
           </div>
         </div>
 
         <!-- Step 3 -->
         <div id="view-flash" class="view" hidden>
-          <h1 tabindex="-1" id="flash-title">Installing</h1>
+          <h3 tabindex="-1" id="flash-title">Installing</h3>
           <p class="warnline" id="flash-warn">Keep it plugged in and this tab open.</p>
           <p class="phase" id="flash-phase">Getting ready…</p>
 
@@ -148,7 +144,7 @@
 
         <!-- Step 4 -->
         <div id="view-done" class="view" hidden>
-          <h1 tabindex="-1" id="done-title">Done</h1>
+          <h3 tabindex="-1" id="done-title">Done</h3>
           <p id="done-text"></p>
           <p class="muted" id="done-sub"></p>
           <div class="actions">
@@ -158,7 +154,7 @@
 
         <!-- Error -->
         <div id="view-error" class="view" hidden role="alert">
-          <h1 tabindex="-1" id="err-title">Something went wrong</h1>
+          <h3 tabindex="-1" id="err-title">Something went wrong</h3>
           <p id="err-text"></p>
           <ul class="tips" id="err-tips"></ul>
           <div class="actions">
@@ -173,12 +169,29 @@
           <button type="button" class="btn small ghost" id="btn-copy-log">Copy</button>
         </details>
     </section>
+
+    <h2 class="section">What you get</h2>
+    <ul class="facts">
+      <li><b>Scales and chords.</b> 18 scales, chord modes, a chord you teach it, strum.</li>
+      <li><b>Arpeggiator and note repeat.</b> Synced to its own tempo or to MIDI clock.</li>
+      <li><b>Logic and Ableton Live.</b> Transport, track names, knobs on instrument, plug-in, volume, pan or sends. The 4D encoder moves through regions and notes.</li>
+      <li><b>Keys.</b> Velocity curves, keyboard split, octave and transpose.</li>
+      <li><b>Controls.</b> 8 knobs × 4 pages of MIDI CC, pitch and mod strips, pedals, 8 presets.</li>
+    </ul>
+
+    <h2 class="section">You need</h2>
+    <ul class="facts">
+      <li>A Komplete Kontrol M32 and its USB cable.</li>
+      <li>Chrome, Edge or Opera on macOS, Windows or Linux.</li>
+      <li>To go back later: NI's M32 firmware updater (free from Native Instruments).</li>
+    </ul>
+
+    <h2 class="section">If something goes wrong</h2>
+    <p class="body">Hold <b>Shift</b> and <b>Browser</b> while plugging the keyboard in. It starts in update mode, and this page can install again. NI's bootloader is never changed, so the keyboard can always be restored.</p>
   </main>
 
   <footer class="foot">
-    <p>Unofficial. Not made or endorsed by Native Instruments. Komplete Kontrol is their trademark.
-      NI's bootloader is never touched, so you can always go back.
-      <a href="https://github.com/Gori/my-kontrol">Source &amp; help</a> · GPL-3.0</p>
+    <p>Unofficial, not affiliated with Native Instruments. <a href="https://github.com/Gori/my-kontrol">Source</a></p>
   </footer>
 </body>
 </html>

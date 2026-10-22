@@ -68,9 +68,7 @@ export class Oled {
     const on = css.getPropertyValue('--pixel').trim() || '#dff2ff';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = on;
-    ctx.shadowColor = on;
-    ctx.shadowBlur = sx * 1.6;
-    const gap = Math.max(0.5, sx * 0.14);
+    const gap = Math.max(0.5, sx * 0.12);
     for (let y = 0; y < H; y++)
       for (let x = 0; x < W; x++)
         if (this.px[y * W + x]) ctx.fillRect(x * sx, y * sy, sx - gap, sy - gap);
