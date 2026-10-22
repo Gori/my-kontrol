@@ -1,7 +1,7 @@
 // WebUSB DFU 1.1 for NI Komplete Kontrol keyboards. No DOM: runs in the browser
 // and in Node tests against a mock USBDevice.
 //
-// Mirrors tools/m32dfu.py (which mirrors NI KKMUpdater 3.17.0) request for request:
+// Mirrors tools/mkflash.py (which mirrors NI KKMUpdater 3.17.0) request for request:
 //   enter: GET_DESCRIPTOR(config) -> vendor 0xB3 "flash type" -> DFU_DETACH
 //   flash: GET_DESCRIPTOR(config) -> GETSTATUS [-> CLRSTATUS] -> DNLOAD n / GETSTATUS poll ...
 //          -> zero-length DNLOAD -> GETSTATUS manifest poll [-> DETACH]
@@ -15,7 +15,7 @@ export const STATES = {
   6: 'dfuMANIFEST-SYNC', 7: 'dfuMANIFEST', 8: 'dfuMANIFEST-WAIT-RESET', 9: 'dfuUPLOAD-IDLE', 10: 'dfuERROR',
 };
 
-// pyusb's default control transfer timeout; m32dfu.py relies on it for GET_DESCRIPTOR and CLRSTATUS.
+// pyusb's default control transfer timeout; mkflash.py relies on it for GET_DESCRIPTOR and CLRSTATUS.
 const DEFAULT_TIMEOUT = 1000;
 
 export class DfuError extends Error {
@@ -100,7 +100,7 @@ export async function ctrlOut(device, bm, req, value, index, data, timeout = DEF
   return r;
 }
 
-// Same walk as m32dfu.py dfu_info(): last interface with class 0xFE / subclass 1 that
+// Same walk as mkflash.py dfu_info(): last interface with class 0xFE / subclass 1 that
 // is followed by a DFU functional descriptor (type 0x21).
 export function parseDfuInfo(raw) {
   let i = 0, cur = null, info = null;
@@ -171,7 +171,7 @@ export async function enterDfu(device, { log = () => {} } = {}) {
     log('already in DFU mode');
     return { alreadyDfu: true, info, flashType: null };
   }
-  // m32dfu.py reads it before detaching and would abort on a stall; so do we.
+  // mkflash.py reads it before detaching and would abort on a stall; so do we.
   const ft = await readFlashType(device);
   const flashType = decodeFlashType(ft);
   log(`flash type: ${flashType}`);
@@ -185,7 +185,7 @@ export async function enterDfu(device, { log = () => {} } = {}) {
   return { alreadyDfu: false, info, flashType };
 }
 
-// Wait for the bootloader to enumerate. m32dfu.py: 20 x (sleep 0.5 s, look).
+// Wait for the bootloader to enumerate. mkflash.py: 20 x (sleep 0.5 s, look).
 // Only finds devices this origin already has permission for; otherwise returns null
 // and the caller asks the user to click Continue (requestDevice needs a gesture).
 export async function waitForDevice(usb, match, { sleep = realSleep, tries = 20, intervalMs = 500, signal } = {}) {
@@ -219,7 +219,7 @@ export async function flash(device, image, { onProgress = () => {}, log = () => 
   for (let n = 0; n <= blocks.length; n++) {
     const blk = n < blocks.length ? blocks[n] : null;
     await ctrlOut(device, 0x21, REQ.DNLOAD, n, iface, blk, 5000, blk ? `write block ${n}` : 'finish download');
-    // m32dfu.py polls without limit; cap it so a wedged bootloader becomes an error, not a hang.
+    // mkflash.py polls without limit; cap it so a wedged bootloader becomes an error, not a hang.
     for (let polls = 0; ; polls++) {
       if (polls >= 1000) throw new DfuError('timeout', `Block ${n}: bootloader stayed busy`, { block: n });
       const s = await getStatus(device, iface);

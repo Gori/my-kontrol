@@ -1,6 +1,6 @@
 #pragma once
 /* Pedal jack: TRS on PC4/PC5 (ADC ch14/15), plug detect on PB12.
-   Each contact is sampled while the other is driven high (re/hardware_map.md 6).
+   Each contact is sampled while the other is driven high (docs/hardware/m32.md 6).
    Two footswitches; released level is learned while the jack settles. */
 #include <stdint.h>
 

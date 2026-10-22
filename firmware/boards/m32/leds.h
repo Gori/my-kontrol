@@ -1,6 +1,6 @@
 #pragma once
 /* 21 button LEDs on an IS31FL3236-type driver (I2C 0x3C on PB6/PB7, PA15 = enable).
-   LED index = button index for the backlit buttons (re/hardware_map.md 5). */
+   LED index = button index for the backlit buttons (docs/hardware/m32.md 5). */
 #include <stdint.h>
 
 #define LED_COUNT 21

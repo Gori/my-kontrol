@@ -1,13 +1,13 @@
-"""Run the real tools/m32dfu.py against a simulated keyboard and print every control
+"""Run the real tools/mkflash.py against a simulated keyboard and print every control
 transfer and sleep as JSON. No USB access: pyusb is replaced by stubs before import.
 
-usage: python3 -I m32dfu_trace.py <m32dfu.py> <scenario.json>
+usage: python3 -I mkflash_trace.py <mkflash.py> <scenario.json>
 scenario: {"cmd": "enter"|"flash", "image": path, "mode": "app"|"dfu", plus Sim options}
 The simulator below must stay identical to Sim in mockusb.js.
 """
 import hashlib, io, json, os, runpy, sys, time, types
 
-M32DFU, SCEN = sys.argv[1], json.load(open(sys.argv[2]))
+MKFLASH, SCEN = sys.argv[1], json.load(open(sys.argv[2]))
 DESC = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'descriptors.json')))
 DESC = {k: bytes(b for d in DESC[k] for b in d) for k in ('app', 'dfu')}
 trace = []
@@ -120,10 +120,10 @@ sys.modules.update({'usb': usb, 'usb.core': core, 'usb.util': util,
                     'usb.backend': backend, 'usb.backend.libusb1': libusb1})
 time.sleep = lambda sec: trace.append(['sleep', round(sec * 1000)])
 
-sys.argv = [M32DFU, SCEN['cmd']] + ([SCEN['image']] if SCEN['cmd'] == 'flash' else [])
+sys.argv = [MKFLASH, SCEN['cmd']] + ([SCEN['image']] if SCEN['cmd'] == 'flash' else [])
 real_stdout, sys.stdout = sys.stdout, io.StringIO()
 try:
-    runpy.run_path(M32DFU, run_name='__main__')
+    runpy.run_path(MKFLASH, run_name='__main__')
 except SystemExit as e:
     trace.append(['exit', str(e.code)])
 finally:

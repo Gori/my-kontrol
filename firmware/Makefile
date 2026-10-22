@@ -1,6 +1,6 @@
 # My Kontrol firmware.
 #   make                  release build for BOARD (default m32)
-#   make DEV=1            developer build: event injection over USB (tools/m32test.py)
+#   make DEV=1            developer build: event injection over USB (tools/mktest.py)
 #   make BOARD=<name>     another keyboard, see docs/porting.md
 #   make test             host tests (no hardware)
 # Dependencies: git submodules in lib/ (git submodule update --init)

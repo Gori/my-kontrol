@@ -120,9 +120,9 @@ const uint16_t *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 }
 
 /* Vendor requests:
-   0xB3 IN   NI's flash-type query; "none" (tools/m32dfu.py and the web
+   0xB3 IN   NI's flash-type query; "none" (tools/mkflash.py and the web
              installer read it before detaching, as with NI's firmware)
-   0xB5 IN   diagnostics (tools/m32diag.py)
+   0xB5 IN   diagnostics (tools/mkdiag.py)
    0xB8 OUT  developer builds only: inject an event, wValue = type | id << 8,
              wIndex = value (tools/mktest.py)
    0xBD IN   developer builds only: read memory (tools/mkpeek.py) */

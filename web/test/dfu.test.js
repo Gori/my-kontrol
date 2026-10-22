@@ -12,9 +12,9 @@ import { Sim, MockDevice, MockUsb, recordingSleep, DESC } from './mockusb.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const REPO = join(HERE, '..', '..');
-const M32DFU = process.env.MK_M32DFU || join(REPO, 'tools', 'm32dfu.py');
+const MKFLASH = process.env.MK_FLASH || join(REPO, 'tools', 'mkflash.py');
 const STOCK_BIN = join(process.env.MK_FW_DIR || join(REPO, 'fw'), 'm32_v140.bin');
-const HARNESS = join(HERE, 'm32dfu_trace.py');
+const HARNESS = join(HERE, 'mkflash_trace.py');
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
@@ -30,7 +30,7 @@ const python = (() => {
   const r = spawnSync('python3', ['-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' });
   return r.status === 0 && r.stdout.trim() === '3';
 })();
-const canCompare = python && existsSync(M32DFU);
+const canCompare = python && existsSync(MKFLASH);
 
 function runPython(scenario, image) {
   const dir = mkdtempSync(join(tmpdir(), 'mk-dfu-'));
@@ -39,7 +39,7 @@ function runPython(scenario, image) {
     if (image) writeFileSync(imgPath, image);
     const scenPath = join(dir, 'scenario.json');
     writeFileSync(scenPath, JSON.stringify({ ...scenario, image: imgPath }));
-    const r = spawnSync('python3', ['-I', HARNESS, M32DFU, scenPath], { encoding: 'utf8' });
+    const r = spawnSync('python3', ['-I', HARNESS, MKFLASH, scenPath], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(r.stdout);
   } finally {
@@ -81,7 +81,7 @@ async function runJsEnter(scenario) {
 // Python trace ends with dispose; sleep(5); describe() of whatever enumerated.
 const upToDispose = (t) => t.slice(0, t.findIndex((e) => e[0] === 'dispose') + 1);
 
-test('parseDfuInfo reads the DFU functional descriptor like m32dfu.py', () => {
+test('parseDfuInfo reads the DFU functional descriptor like mkflash.py', () => {
   assert.deepEqual(dfu.parseDfuInfo(DESC.app), { iface: 2, proto: 1, attrs: 0x09, timeout: 255, xfer: 64 });
   assert.deepEqual(dfu.parseDfuInfo(DESC.dfu), { iface: 0, proto: 2, attrs: 0x0b, timeout: 255, xfer: 1024 });
   assert.equal(dfu.parseDfuInfo(Uint8Array.of(9, 2, 9, 0, 0, 1, 0, 0x80, 50)), null);
@@ -123,12 +123,12 @@ const FLASH_SCENARIOS = [
 ];
 
 for (const [name, scen, size] of FLASH_SCENARIOS) {
-  test(`flash matches m32dfu.py: ${name}`, { skip: !canCompare && 'python3 or tools/m32dfu.py not available' }, async () => {
+  test(`flash matches mkflash.py: ${name}`, { skip: !canCompare && 'python3 or tools/mkflash.py not available' }, async () => {
     const img = syntheticImage(size);
     const py = runPython({ cmd: 'flash', mode: 'dfu', ...scen }, img);
     const js = await runJsFlash(scen, img);
     if (py.at(-1)[0] === 'exit') {
-      // m32dfu.py raises SystemExit; flash() throws with the same block.
+      // mkflash.py raises SystemExit; flash() throws with the same block.
       assert.deepEqual(js.trace, py.slice(0, -1));
       assert.equal(js.error.code, 'status');
       assert.match(py.at(-1)[1], new RegExp(`block ${js.error.block}:`));
@@ -139,8 +139,8 @@ for (const [name, scen, size] of FLASH_SCENARIOS) {
   });
 }
 
-test('flash matches m32dfu.py with the real NI image (fw/m32_v140.bin)',
-  { skip: (!canCompare && 'python3 or tools/m32dfu.py not available') || (!existsSync(STOCK_BIN) && 'fw/m32_v140.bin not present') },
+test('flash matches mkflash.py with the real NI image (fw/m32_v140.bin)',
+  { skip: (!canCompare && 'python3 or tools/mkflash.py not available') || (!existsSync(STOCK_BIN) && 'fw/m32_v140.bin not present') },
   async () => {
     const img = new Uint8Array(readFileSync(STOCK_BIN));
     const scen = { busy_every: 7, busy_polls: 3, busy_poll_ms: 20, manifest: [[7, 30], [8, 0]] };
@@ -152,8 +152,8 @@ test('flash matches m32dfu.py with the real NI image (fw/m32_v140.bin)',
   });
 
 for (const detachRaises of [false, true]) {
-  test(`enter matches m32dfu.py (detach ${detachRaises ? 'drops off the bus' : 'returns'})`,
-    { skip: !canCompare && 'python3 or tools/m32dfu.py not available' }, async () => {
+  test(`enter matches mkflash.py (detach ${detachRaises ? 'drops off the bus' : 'returns'})`,
+    { skip: !canCompare && 'python3 or tools/mkflash.py not available' }, async () => {
       const py = runPython({ cmd: 'enter', mode: 'app', detach_raises: detachRaises });
       const js = await runJsEnter({ detach_raises: detachRaises });
       assert.equal(js.r.alreadyDfu, false);
@@ -168,7 +168,7 @@ for (const detachRaises of [false, true]) {
         ['sleep', 500],
       ]);
       assert.deepEqual(js.trace, py.slice(0, js.trace.length));
-      // m32dfu.py then only prints diagnostics of the DFU device (descriptor x2, GETSTATUS,
+      // mkflash.py then only prints diagnostics of the DFU device (descriptor x2, GETSTATUS,
       // and 0xB3, which the bootloader stalls). flash() starts with its own descriptor + GETSTATUS.
       assert.deepEqual(py.slice(js.trace.length).map((e) => [e[1], e[2]]), [[0x80, 6], [0x80, 6], [0xa1, 3], [0xc0, 0xb3]]);
     });

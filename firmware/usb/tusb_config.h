@@ -9,8 +9,8 @@
 #define CFG_TUD_ENABLED        1
 #define CFG_TUD_ENDPOINT0_SIZE 64
 
-/* Only the DFU runtime interface, so m32dfu.py `enter` (DFU_DETACH) can get back
-   to the NI bootloader once the boot flag has been disarmed. */
+/* DFU runtime: DFU_DETACH from tools/mkflash.py or the web installer drops
+   into NI's bootloader for an update. */
 #define CFG_TUD_DFU_RUNTIME    1
 
 #define CFG_TUD_MIDI           1

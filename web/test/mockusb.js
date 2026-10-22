@@ -1,5 +1,5 @@
 // Simulated keyboard behind a WebUSB-shaped API. Sim must stay identical to Sim in
-// m32dfu_trace.py so both tools can be compared transfer by transfer.
+// mkflash_trace.py so both tools can be compared transfer by transfer.
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';

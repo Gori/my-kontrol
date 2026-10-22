@@ -1,6 +1,6 @@
 #pragma once
 /* 8 endless knobs: dual-wiper pots on ADC1 ch4-7 behind a 4:1 mux (PB8/PB9).
-   See re/hardware_map.md 3. */
+   See docs/hardware/m32.md 3. */
 #include <stdint.h>
 
 void knobs_init(void);

@@ -1,6 +1,6 @@
 #pragma once
 /* Pitch and mod touch strips: one touch controller each on its own bit-banged
-   I2C bus (re/hardware_map.md 4). Position 0 = untouched, 1..200 along the strip. */
+   I2C bus (docs/hardware/m32.md 4). Position 0 = untouched, 1..200 along the strip. */
 #include <stdint.h>
 
 int strips_init(void);                     /* bit0 pitch ok, bit1 mod ok */

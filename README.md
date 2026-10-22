@@ -1,133 +1,83 @@
-# Oskar's Firmware for the Komplete Kontrol M32
+# My Kontrol
 
-Replacement application firmware for the Native Instruments Komplete Kontrol M32.
-It runs standalone: no Komplete Kontrol, Native Access or other NI software.
-NI's bootloader stays untouched, so the stock firmware can always be restored.
+Open-source firmware for Native Instruments Komplete Kontrol keyboards. Your
+keyboard works on its own: no Komplete Kontrol app, no Native Access, no
+drivers.
 
-## Status
+Plug it into any computer, phone or synth that speaks USB MIDI and play.
+Scales, chords, arpeggiator, note repeat and strum all run on the keyboard.
+Logic and Ableton Live can drive the screen and the lights.
 
-| Area | State |
+**Status: beta.** Runs on the Komplete Kontrol M32. More keyboards are welcome, see [Adding a keyboard](docs/porting.md).
+
+## Install
+
+1. Open the **[web installer](https://gori.github.io/my-kontrol/)** in Chrome or Edge.
+2. Plug in the keyboard and click **Install**.
+
+That's it. To go back to NI's firmware, the same page restores it from NI's official updater.
+
+Something went wrong? Hold **Shift + Browser** while plugging in. The keyboard
+starts in update mode and the installer can flash it again. NI's bootloader is
+never touched, so the keyboard can always be recovered.
+
+## What it does
+
+- **Smart Play**
+  - 18 scales, in quantize or easy mode (white keys only).
+  - Chords, plus a chord you teach it: hold **Ideas** and play a chord.
+  - Strum.
+- **Arpeggiator**
+  - Modes: up, down, up/down, order, random, chord.
+  - 1/4 to 1/32 including triplets, gate, swing, hold.
+  - Runs on internal tempo or follows MIDI clock.
+- **Note repeat** on **Quantize**: tap to toggle, hold for momentary. Velocity can follow the mod strip.
+- **Keys**
+  - Velocity curves and fixed velocity.
+  - Split the keyboard into two zones on two channels.
+  - Octave and transpose.
+- **Controls**
+  - 8 knobs × 4 pages of CCs.
+  - 14-bit pitch strip, mod strip, two footswitches.
+- **Ableton Live**: a control-surface script in [`daw/ableton`](daw/ableton) gives three views on the keyboard:
+  - device parameters with names and values
+  - mixer
+  - a clip launcher grid
+- **Logic, Live and others**: Mackie Control on the "My Kontrol DAW" port. Transport, track names and V-pots work.
+- **8 presets**, and settings that survive updates.
+
+The [manual](docs/manual.md) explains every button.
+
+## Build it yourself
+
+```sh
+git clone --recursive https://github.com/Gori/my-kontrol
+cd my-kontrol/firmware
+make            # needs arm-none-eabi-gcc
+make test       # host tests, no keyboard needed
+```
+
+Flash from the command line with `python3 tools/mkflash.py enter` and then
+`python3 tools/mkflash.py flash firmware/build/m32/firmware.bin` (needs `pyusb`).
+
+## Project layout
+
+| Path | What |
 |---|---|
-| Flashing, recovery, cold boot | Done, tested on hardware |
-| Display (128x32 SSD1306), fonts, menus | Done |
-| USB MIDI, two ports: "M32 Keys" and "M32 DAW" | Done |
-| Smart Play: scale (quantize / easy), chords, arpeggiator, MIDI clock sync | Done, host tests + hardware MIDI tests |
-| Settings saved in flash, survive firmware updates | Done |
-| Mackie Control (Logic, Ableton) protocol | Done over USB; not yet tested in a DAW |
-| Keybed with velocity, 21 buttons, 4D encoder, 8 knobs + touch, strips | Done, tested on hardware |
-| Button LEDs | Driver answers; visual check pending |
-| Pedal input (2 footswitches, CC 64/65) | Done; tested unplugged only |
-| Knob pages (4 × 8 CCs), 8 user presets | Done, presets tested on hardware |
+| `firmware/core` | everything that is the same on every keyboard |
+| `firmware/boards` | one folder per keyboard: pins, keybed, lights, display |
+| `firmware/platform` | one folder per chip family |
+| `daw/ableton` | Ableton Live script |
+| `web` | the web installer |
+| `docs` | [manual](docs/manual.md), [porting guide](docs/porting.md), [host protocol](docs/protocol.md), [M32 hardware notes](docs/hardware/m32.md) |
 
-## Layout
+## Thanks and legal
 
-```
-firmware/   application firmware (C, TinyUSB)
-  test/     host tests (Smart Play) and UI preview renderer
-tools/      m32dfu.py (flash), m32diag.py (diagnostics), m32test.py (inject UI/key events),
-            mksplash.py, bdf2c.py, ghidra/ (decompiler export script)
-fw/         NI stock images extracted from NI's updater (recovery: m32_v140.bin)
-re/         reverse-engineering output (Ghidra project, decompilation, hardware map)
-fonts/      Spleen bitmap fonts (BSD-2-Clause)
-```
+GPL-3.0. Uses [TinyUSB](https://github.com/hathach/tinyusb) (MIT), CMSIS
+(Apache-2.0), the [Spleen](https://github.com/fcambus/spleen) fonts (BSD-2) and
+[fflate](https://github.com/101arrowz/fflate) (MIT). See [NOTICE](NOTICE.md).
 
-## Build
-
-Requires `arm-none-eabi-gcc` (Homebrew) and Python with `pyusb` (libusb from Homebrew).
-
-```
-cd firmware
-make                 # build/m32.bin
-```
-
-Host tests:
-
-```
-cd firmware/test
-cc -I.. test_smartplay.c ../smartplay.c -o /tmp/t && /tmp/t
-cc -I.. ui_preview.c ../ui.c ../gfx.c ../settings.c ../smartplay.c -o /tmp/p && /tmp/p /tmp
-```
-
-## Flash
-
-```
-cd tools
-python3 m32dfu.py enter                        # app -> NI bootloader (DFU)
-python3 m32dfu.py flash ../firmware/build/m32.bin
-```
-
-`enter` works from both NI's firmware and this firmware.
-
-## Recovery
-
-The NI bootloader (0x08000000–0x08002FFF) is never written. This firmware falls back to it on its own:
-
-- any CPU fault -> bootloader
-- a hang -> 2 s hardware watchdog -> next boot goes to the bootloader
-- clock failure at boot -> bootloader
-
-If the M32 shows "Firmware update in progress", it is in the bootloader; flash again.
-To go back to stock: `python3 m32dfu.py flash ../fw/m32_v140.bin`.
-
-## How the NI bootloader decides what to run
-
-Flag page at 0x0801FC00 (first 8 bytes):
-
-| Bytes | Meaning |
-|---|---|
-| `55 5A A5 AA 59 95 3A A3` | stay in DFU (written by the app before resetting) |
-| `59 95 3A A3 55 5A A5 AA` | application valid (written by the bootloader after a download) |
-| anything else | no valid application: stay in DFU |
-
-The bootloader does not checksum the image. It takes its DFU-mode USB strings
-from the application area.
-
-## Controls
-
-Transport and DAW buttons always send Mackie Control on the DAW port. The knobs
-and the 4D encoder follow **System > DAW Mode** (MIDI or Mackie).
-
-| Button | Press | Shift + press |
-|---|---|---|
-| Scale | scale mode on/off | open Scale & Chord menu |
-| Arp | arpeggiator on/off | open Arpeggiator menu |
-| Tempo | tap tempo (internal clock) | |
-| Octave < / > | octave −/+ | Octave <: fixed velocity on/off |
-| Browser | open / close the menu | |
-| Undo | MCU Undo | Redo (MCU Shift+Undo) |
-| Quantize / Ideas | MCU F1 / F2 (assign in the DAW) | MCU F5 / F6 |
-| Loop / Metro | MCU Cycle / Click | |
-| Play / Rec / Stop | MCU Play / Record / Stop | Play: Rewind |
-| Preset up / down | MIDI mode: knob page −/+; Mackie mode: MCU Up / Down (track select) | Mackie: MCU Bank left / right |
-| M / S | MCU Mute / Solo, strip 1 | |
-| Plug-in / Track | MCU Plug-in / Pan assignment | MCU Instrument / Send |
-
-| Control | MIDI mode | Mackie mode |
-|---|---|---|
-| Knobs 1–8 | CC 14–21 (Knobs menu), value popup | V-pots 1–8; touch = fader touch |
-| 4D turn | opens the menu; in the menu moves/edits | jog wheel |
-| 4D push / up / down / left / right | menu navigation; left/right on the home screen = transpose −/+ | MCU Enter / Up / Down / Left / Right |
-| Pitch strip | 14-bit pitch bend, centre on release | same |
-| Mod strip | CC 1 (Knobs menu), holds its value | same |
-
-Lights: Shift, Scale, Arp, Octave show their state; Tempo flashes on the beat;
-Loop, Metro, Play, Rec, Stop, M, S, Plug-in, Track mirror the DAW.
-
-## MIDI ports
-
-| Port | Carries |
-|---|---|
-| M32 Keys | notes, Smart Play output, knob CCs; MIDI clock in for the arpeggiator |
-| M32 DAW | Mackie Control (select "Mackie Control" in Logic / Ableton, input and output = M32 DAW) |
-
-## Flash map
-
-| Address | Use |
-|---|---|
-| 0x08000000–0x08002FFF | NI bootloader (never touched) |
-| 0x08003000–0x0801B7FF | application |
-| 0x0801B800 | NI knob names (kept for restoring stock) |
-| 0x0801E000 | 8 user presets |
-| 0x0801E800, 0x0801F000 | settings log (two pages) |
-| 0x0801F800 | NI settings, calibration, serial (never written) |
-| 0x0801FC00 | bootloader flag page |
+My Kontrol is an independent project. It is not affiliated with or endorsed by
+Native Instruments. Komplete Kontrol is a trademark of Native Instruments. No
+NI code or firmware is included. Installing other firmware is at your own
+risk, though the original firmware can always be restored.
