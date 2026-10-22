@@ -33,6 +33,7 @@ void settings_defaults(settings_t *s)
     s->contrast = 0xE0;          /* NI's value */
     s->led_dim = 0x1E;
     s->screensaver = 3;          /* 10 min */
+    s->nav_keys = 1;
 }
 
 static void clamp_u8(uint8_t *v, int lo, int hi, int def)
@@ -103,5 +104,6 @@ void settings_sanitize(settings_t *s)
     clamp_u8(&s->daw_mode, 0, DAW_MODE_COUNT - 1, DAW_AUTO);
     clamp_u8(&s->tempo_light, 0, TEMPO_LIGHT_COUNT - 1, TEMPO_LIGHT_AUTO);
     clamp_u8(&s->clock_out, 0, 1, 0);
+    clamp_u8(&s->nav_keys, 0, 1, 1);
     clamp_u8(&s->screensaver, 0, settings_screensaver_count - 1, 3);
 }

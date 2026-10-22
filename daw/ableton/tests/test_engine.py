@@ -221,6 +221,15 @@ class DeviceView(unittest.TestCase):
         self.assertEqual(h.song.visible_tracks[0].devices[0].parameters[0].value, 0)
         self.assertEqual(h.screen.notifications[-1], ("Dev 1.1", "Off"))
 
+    def test_selection_change_redraws_at_once(self):
+        h = Harness()
+        h.connect()
+        h.song.view.selected_track = h.song.visible_tracks[2]
+        h.engine.selection_changed()      # no tick
+        h.sync()
+        self.assertEqual(h.text(p.TEXT_TRACK), "Track 3")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Dev 3.1 P1")
+
     def test_stepped_parameter_needs_several_steps(self):
         h = Harness()
         h.connect()
@@ -366,6 +375,36 @@ class ClipView(unittest.TestCase):
         h.send(p.encoder_turn(-1))
         h.settle()
         self.assertEqual(h.text(p.TEXT_SUBTITLE), "Tracks 1-2 Scenes 4-7")
+
+    def test_cursor_follows_live_selection(self):
+        # Default firmware: 4D arrives in Live as arrow keys, moving Live's
+        # selection. Cursor and ring must follow without any tick.
+        h = Harness(n_tracks=12, n_scenes=10)
+        h.connect()
+        h.view(p.VIEW_CLIPS)
+        h.song.view.selected_track = h.song.visible_tracks[10]
+        h.song.view.selected_scene = h.song.scenes[7]
+        h.engine.selection_changed()
+        h.sync()
+        g = h.screen.grid
+        self.assertEqual((g.cursor_col, g.cursor_row), (7, 3))
+        self.assertEqual(h.highlights[-1], (3, 4, 8, 4, False))
+        h.settle()      # headers are lower priority than GRID; they follow
+        self.assertEqual(h.text(p.TEXT_COLUMN + 7), "Track 11")
+        # Back up: the ring scrolls minimally.
+        h.song.view.selected_scene = h.song.scenes[2]
+        h.engine.selection_changed()
+        h.sync()
+        self.assertEqual((h.screen.grid.cursor_col, h.screen.grid.cursor_row), (7, 0))
+        self.assertEqual(h.highlights[-1], (3, 2, 8, 4, False))
+        # Push launches the slot Live has highlighted.
+        h.press(p.CTL_NAV_PUSH)
+        self.assertEqual(h.song.visible_tracks[10].clip_slots[2].fired, 1)
+        # A return track keeps the column.
+        h.song.view.selected_track = h.song.return_tracks[0]
+        h.engine.selection_changed()
+        h.sync()
+        self.assertEqual(h.screen.grid.cursor_col, 7)
 
     def test_leaving_hides_session_ring(self):
         h = Harness()

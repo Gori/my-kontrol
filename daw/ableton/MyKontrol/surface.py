@@ -113,6 +113,18 @@ class MyKontrol(ControlSurface):
     def _on_song_time(self):
         self._guarded(self._engine.song_time_changed)
 
+    # _Framework already listens to Song.View.selected_track / selected_scene
+    # and calls these; hook them for prompt redraws.
+    def _on_selected_track_changed(self):
+        super(MyKontrol, self)._on_selected_track_changed()
+        if getattr(self, "_engine", None) is not None:
+            self._guarded(self._engine.selection_changed)
+
+    def _on_selected_scene_changed(self):
+        super(MyKontrol, self)._on_selected_scene_changed()
+        if getattr(self, "_engine", None) is not None:
+            self._guarded(self._engine.selection_changed)
+
     def refresh_state(self):
         super(MyKontrol, self).refresh_state()
         self._guarded(self._engine.full_refresh)

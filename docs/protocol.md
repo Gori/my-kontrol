@@ -184,6 +184,12 @@ is "Quantize" / "1/16".
 
 This is what the Ableton Live script does.
 
+By default ("4D as Keys" on) the 4D encoder does not reach the host as
+protocol messages: the keyboard types it into the focused window as USB
+keyboard keys (arrows, Return, Space, = / -), so the host follows the DAW's
+own selection (in Live, the clip view cursor is the highlighted clip slot).
+The 4D rows below apply when the user turns "4D as Keys" off.
+
 | Control | Device | Volume / Pan | Sends | Clips |
 |---|---|---|---|---|
 | Knobs | 8 parameters of the selected device bank | volume / pan of 8 tracks | sends A-H of the selected track | volume of the 8 grid tracks |

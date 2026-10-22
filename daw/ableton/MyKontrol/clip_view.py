@@ -9,9 +9,11 @@
 #   4D push               launch the clip under the cursor (Shift: its scene)
 #   Preset up / down      page the window 4 scenes up / down
 #
-# The window is shown in Live as the coloured session ring. Moving the
-# cursor selects that track and scene in Live, so Quantize, Mute and Solo
-# act on what the cursor points at.
+# The cursor is Live's highlighted clip slot (selected track x selected
+# scene). By default the keyboard sends its 4D encoder as arrow keys to
+# Live, which moves that selection; the cursor and the session ring follow
+# it. When the 4D comes as protocol messages instead, moving the cursor sets
+# Live's selection, so both paths end up in the same place.
 
 from . import protocol as p
 from . import liveutil as lu
@@ -68,8 +70,18 @@ class ClipView(View):
         self.col = max(0, abs_col - self.track_offset)
         self.row = max(0, abs_row - self.scene_offset)
 
+    def _follow_live(self, tracks, scenes):
+        """Put the cursor on Live's highlighted slot, scrolling the ring as
+        little as possible. A selected return/master track keeps the column."""
+        song = self._song
+        col = lu.index_of(tracks, lu.selected_track(song))
+        row = lu.index_of(scenes, song.view.selected_scene)
+        self._show(col if col >= 0 else self.track_offset + self.col,
+                   row if row >= 0 else self.scene_offset + self.row)
+
     def _window(self):
         tracks, scenes = self._tracks(), self._scenes()
+        self._follow_live(tracks, scenes)
         self._clamp(tracks, scenes)
         cols = [tracks[i] if i < len(tracks) else None
                 for i in range(self.track_offset, self.track_offset + COLS)]
@@ -90,16 +102,6 @@ class ClipView(View):
 
     # -- input --------------------------------------------------------------
 
-    def enter(self):
-        super(ClipView, self).enter()
-        # Start where Live's selection is.
-        song = self._song
-        col = lu.index_of(self._tracks(), lu.selected_track(song))
-        row = lu.index_of(self._scenes(), song.view.selected_scene)
-        if col >= 0 or row >= 0:
-            self._show(col if col >= 0 else self.track_offset + self.col,
-                       row if row >= 0 else self.scene_offset + self.row)
-
     def exit(self):
         super(ClipView, self).exit()
         self._set_ring(None)
@@ -108,6 +110,7 @@ class ClipView(View):
         tracks, scenes = self._tracks(), self._scenes()
         if not tracks or not scenes:
             return
+        self._follow_live(tracks, scenes)
         abs_col = max(0, min(len(tracks) - 1, self.track_offset + self.col + dcol))
         abs_row = max(0, min(len(scenes) - 1, self.scene_offset + self.row + drow))
         self._show(abs_col, abs_row)
@@ -117,6 +120,7 @@ class ClipView(View):
         tracks, scenes = self._tracks(), self._scenes()
         if not scenes:
             return
+        self._follow_live(tracks, scenes)
         top = max(0, min(max(0, len(scenes) - ROWS), self.scene_offset + direction * ROWS))
         abs_row = max(0, min(len(scenes) - 1, top + self.row))
         self.scene_offset = top

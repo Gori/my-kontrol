@@ -181,10 +181,19 @@ class LiveGlue(unittest.TestCase):
         self.assertTrue(song.is_playing)
         surface.receive_midi(p.knob_turn(0, 10))
         self.assertAlmostEqual(song.visible_tracks[0].devices[0].parameters[1].value, 0.55)
+        song.view.selected_track = song.visible_tracks[1]
+        surface._on_selected_track_changed()     # what _Framework's listener calls
+        screen = Screen()
+        for m in c.sent:
+            screen.feed(m)
+        self.assertEqual(screen.text(p.TEXT_TRACK), "Track 2")
         surface.receive_midi(p.view(p.VIEW_CLIPS))
         self.clock.advance(0.1)
         surface.update_display()
         self.assertEqual(c.highlights[-1], (0, 0, 8, 4, False))
+        song.view.selected_scene = song.scenes[5]
+        surface._on_selected_scene_changed()
+        self.assertEqual(c.highlights[-1], (0, 2, 8, 4, False))
         song._listeners["current_song_time"][0]()   # Live notifying a song time change
 
         errors = [m for m in c.log if "error" in m]

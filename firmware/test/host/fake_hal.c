@@ -101,3 +101,5 @@ void fake_clear_midi(void)
     fake_drain_midi();
     fake_midi_n[0] = fake_midi_n[1] = 0;
 }
+
+void kbd_tap(uint8_t modifier, uint8_t key) { (void)modifier; (void)key; }

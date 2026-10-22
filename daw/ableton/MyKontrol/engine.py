@@ -8,6 +8,7 @@
 #   receive(midi_bytes)   every message from the DAW port
 #   tick()                Live's 100 ms update_display() timer
 #   song_time_changed()   Song.current_song_time listener (beat flashes)
+#   selection_changed()   selected track / scene listeners (arrow keys in Live)
 #   start() / stop()      script load / unload
 #
 # Keeping this free of Live imports means the unit tests exercise the real
@@ -100,6 +101,13 @@ class Engine(object):
         if self.connected:
             self.controller.render_transport()
             self.outbox.flush(self._clock())
+
+    def selection_changed(self):
+        # The keyboard's 4D arrives in Live as arrow keys by default, so the
+        # selection moves without any message to us. Redraw right away
+        # rather than on the next 100 ms tick.
+        if self.connected:
+            self.update()
 
     # -- rendering ----------------------------------------------------------
 

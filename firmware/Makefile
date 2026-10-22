@@ -14,7 +14,7 @@ TUSB   = lib/tinyusb/src
 
 CORE_SRCS = $(wildcard core/*.c) usb/usb_device.c
 TUSB_SRCS = $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c \
-            $(TUSB)/class/dfu/dfu_rt_device.c $(TUSB)/class/midi/midi_device.c \
+            $(TUSB)/class/dfu/dfu_rt_device.c $(TUSB)/class/midi/midi_device.c $(TUSB)/class/hid/hid_device.c \
             $(PLATFORM_TUSB_SRCS)
 SRCS = $(CORE_SRCS) $(BOARD_SRCS) $(PLATFORM_SRCS) $(TUSB_SRCS)
 

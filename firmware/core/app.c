@@ -7,6 +7,7 @@
 #include "app.h"
 #include "gfx.h"
 #include "host.h"
+#include "kbd.h"
 #include "mcu.h"
 #include "midi.h"
 #include "play.h"
@@ -509,6 +510,11 @@ static int is_nav(uint8_t ctl)
     return ctl >= CTL_NAV_UP && ctl <= CTL_NAV_PUSH;
 }
 
+static int nav_keys(int link)
+{
+    return link != LINK_NONE && settings.nav_keys;
+}
+
 static void button(uint8_t ctl, int down)
 {
     int link = app_link();
@@ -529,6 +535,18 @@ static void button(uint8_t ctl, int down)
         static const uint8_t map[] = {UI_UP, UI_LEFT, UI_RIGHT, UI_DOWN, UI_PUSH};
         if (down)
             ui_input(map[ctl - CTL_NAV_UP], 0);
+        return;
+    }
+    /* with a DAW, the 4D navigates the focused window as a keyboard:
+       arrows (Shift extends the selection), push = Return, Shift+push = Space */
+    if (is_nav(ctl) && nav_keys(link)) {
+        static const uint8_t keys[] = {KEY_UP, KEY_LEFT, KEY_RIGHT, KEY_DOWN, KEY_ENTER};
+        if (down) {
+            if (ctl == CTL_NAV_PUSH && shift)
+                kbd_tap(0, KEY_SPACE);
+            else
+                kbd_tap(shift ? KMOD_SHIFT : 0, keys[ctl - CTL_NAV_UP]);
+        }
         return;
     }
 
@@ -614,6 +632,19 @@ static void encoder(int d)
 {
     if (ui_menu_open()) {
         ui_input(UI_TURN, d);
+        return;
+    }
+    int link = app_link();
+    if (nav_keys(link)) {
+        /* turn = next / previous item; Shift + turn = zoom */
+        for (int i = 0; i < (d < 0 ? -d : d) && i < 8; i++) {
+            if (!shift)
+                kbd_tap(0, d > 0 ? KEY_RIGHT : KEY_LEFT);
+            else if (link == LINK_HOST)
+                kbd_tap(0, d > 0 ? KEY_EQUAL : KEY_MINUS);          /* Live */
+            else
+                kbd_tap(KMOD_CMD, d > 0 ? KEY_RIGHT : KEY_LEFT);    /* Logic */
+        }
         return;
     }
     switch (app_link()) {

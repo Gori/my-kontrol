@@ -46,6 +46,7 @@ typedef struct {
     uint8_t contrast;       /* OLED contrast */
     uint8_t led_dim;        /* brightness of available-but-off button lights */
     uint8_t screensaver;    /* index into settings_screensaver_min */
+    uint8_t nav_keys;       /* with a DAW, the 4D encoder types arrow keys / Return */
     uint8_t reserved[8];    /* zero; room for small additions without a version bump */
 } settings_t;
 

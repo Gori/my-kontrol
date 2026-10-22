@@ -186,13 +186,29 @@ int main(int argc, char **argv)
     /* Mackie */
     uint8_t q[] = {0xF0, 0x00, 0x00, 0x66, 0x14, 0x00, 0xF7};
     sysex(PORT_DAW, q, sizeof q);
-    mcu_lcd_text(0, "Audio 1Bass   Keys   Drums  Vox    Gtr    Pad    Master ");
+    mcu_lcd_text(0, "Cutoff Reso   Attack Decay  SustainRelease Drive  Volume ");
+    for (int k = 0; k < 8; k++) {
+        uint8_t p[4] = {0x1B, 0xB0, 0x30 + k, (k == 1 ? 0x10 : 0x20) | (1 + k)};
+        midi_rx_packet(p);
+    }
+    uint8_t tc[] = {0x40 + 9, '1' - 0x40 + 0x40, 0};
+    (void)tc;
+    for (int i = 0; i < 10; i++) {
+        uint8_t p[4] = {0x1B, 0xB0, 0x40 + i, "1001 30  2"[9 - i]};
+        midi_rx_packet(p);
+    }
     mcu_lcd_text(56, "  0.0  -6.2   -12   +1.5  -inf   -3.0   0.0    0.0  ");
     tick(30);
     shot("mackie");
     ev(EV_KNOB, 1, 2);
     shot("mackie_knob");
     tick(1500);
+    press(CTL_SOLO);
+    shot("mackie_next_mode");
+    tick(1500);
+    mcu_lcd_text(0, "Audio 1Bass   Keys   Drums  Vox    Gtr    Pad    Master ");
+    tick(30);
+    shot("mackie_volume");
 
     /* Live script */
     host_msg(0x00, "\x01", 1);
@@ -216,7 +232,14 @@ int main(int argc, char **argv)
     press(CTL_TRACK);
     tick(1500);
     host_text(HT_SUBTITLE, "Tracks 1-8");
-    shot("live_mixer");
+    const char *tracks[8] = {"Drums", "Bass", "Keys", "Vox", "Gtr", "Pad", "FX", "Master"};
+    for (int k = 0; k < 8; k++)
+        host_text(HT_KNOB_NAME + k, tracks[k]);
+    tick(30);
+    shot("live_volume");
+    press(CTL_SOLO);
+    tick(1500);
+    shot("live_pan");
     press(CTL_BROWSER);
     tick(1500);
     char g[4 + 32] = {8, 4, 2, 1};

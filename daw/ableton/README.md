@@ -54,6 +54,11 @@ pan, sends. The keyboard handles both itself.
 | Ideas | capture MIDI | |
 | Mute, Solo | previous / next knob mode | mute / solo selected track |
 
+By default the keyboard types the 4D encoder into Live as arrow keys,
+Return and Space ("4D as Keys" setting), so it moves Live's own selection.
+The display and the clip view cursor follow that selection. The 4D rows
+above apply when "4D as Keys" is off.
+
 Touching a knob starts an automation gesture, so recorded automation is one
 clean move.
 

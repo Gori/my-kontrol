@@ -184,6 +184,7 @@ static const item_t system_items[] = {
     {"Light Level",  K_INT,  T_U8, &S->led_dim, 0, 120, 5},
     {"Contrast",     K_INT,  T_U8, &S->contrast, 0, 255, 16},
     {"Screen Saver", K_INT,  T_U8, &S->screensaver, 0, 4, 1, 0, fmt_saver},
+    {"4D as Keys",   K_ENUM, T_U8, &S->nav_keys, 0, 1, 1, off_on},
     {"Update Mode",  K_CONFIRM, .action = act_update, .confirm = "Enter update mode?"},
     {"Reset All",    K_CONFIRM, .action = act_reset, .confirm = "Reset all settings?"},
     {"About",        K_ACTION, .action = act_about},
@@ -601,29 +602,39 @@ static void render_knobs(void)
     }
 }
 
+/* title: what the knobs control, inverted, at the left */
+static int mode_title(const char *name)
+{
+    int w = gfx_text(1, 0, name, &font_small);
+    gfx_invert(0, 0, w + 1, 8);
+    return w + 4;
+}
+
 static void render_mackie(void)
 {
     char b[24];
-    /* timecode as bars.beats.sub.ticks when the host is in beats mode */
+    mode_title(knob_target_names[settings.knob_target]);
+    /* position: bars.beats (or the SMPTE digits) from the timecode display */
     const char *tc = mcu_timecode;
     char *p = b;
-    int any = 0;
-    for (int i = 0; i < 10; i++) {
-        any |= tc[i] != ' ';
-        *p++ = tc[i];
-        if (i == 2 || i == 4 || i == 6)
+    for (int i = 0; i < 5; i++) {
+        if (tc[i] != ' ' || p != b)
+            *p++ = tc[i];
+        if (i == 2 && p != b)
             *p++ = mcu_led[MCU_LED_BEATS] ? '.' : ':';
     }
     *p = 0;
-    gfx_text(0, 0, any ? b : "Mackie Control", &font_small);
-    gfx_text_right(DISP_W - 22, 0, mcu_assignment, &font_small);
-    gfx_text(DISP_W - 19, 0, "MCU", &font_small);
-    gfx_invert(DISP_W - 20, 0, 20, 8);
-    /* LCD names row: strips 1-4 and 5-8, 6 characters each */
-    for (int r = 0; r < 2; r++)
-        for (int s = 0; s < 4; s++)
-            gfx_text_n(s * 32, 10 + r * 11, &mcu_lcd[0][(r * 4 + s) * 7], 6, &font_small);
-    gfx_hline_dotted(0, 19, DISP_W);
+    gfx_text_right(DISP_W, 0, b, &font_small);
+    /* 8 knobs: the DAW's name for each (LCD top row) and its ring position */
+    for (int k = 0; k < 8; k++) {
+        int x = (k & 3) * 32, y = k < 4 ? 8 : 20;
+        gfx_text_n(x, y, &mcu_lcd[0][k * 7], 6, &font_small);
+        uint8_t ring = mcu_ring[k], pos = ring & 0x0F, mode = (ring >> 4) & 3;
+        if (pos)
+            gfx_bar(x, y + 8, 29, 3, pos - 1, 10, mode == 1);
+        else
+            gfx_hline_dotted(x, y + 9, 29);
+    }
 }
 
 static void knob_cells(const char names[][HOST_TEXT_LEN / 2 + 1])
@@ -648,8 +659,11 @@ static void render_host_device(void)
 
 static void render_host_mixer(void)
 {
-    gfx_text(0, 0, "Mixer", &font_small);
-    gfx_text_right(DISP_W, 0, host.subtitle, &font_small);
+    static const char *const names[VIEW_COUNT] = {"Device", "Volume", "Clips", "Pan", "Sends"};
+    int x = mode_title(names[host.view]);
+    char b[26];
+    copy(b, host.subtitle[0] ? host.subtitle : host.track, (DISP_W - x) / 5 + 1);
+    gfx_text_right(DISP_W, 0, b, &font_small);
     knob_cells(host.knob_name);
 }
 
@@ -796,7 +810,7 @@ int ui_render(void)
     } else {
         switch (app_link()) {
         case LINK_HOST:
-            if (host.view == VIEW_MIXER) render_host_mixer();
+            if (host.view == VIEW_VOLUME || host.view == VIEW_PAN || host.view == VIEW_SENDS) render_host_mixer();
             else if (host.view == VIEW_CLIPS) render_host_clips();
             else render_host_device();
             break;

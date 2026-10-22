@@ -16,3 +16,8 @@
 #define CFG_TUD_MIDI           1
 #define CFG_TUD_MIDI_RX_BUFSIZE 64
 #define CFG_TUD_MIDI_TX_BUFSIZE 128
+
+/* USB keyboard: the 4D encoder sends arrow keys and Return to the focused
+   window (regions, notes, browser lists) */
+#define CFG_TUD_HID            1
+#define CFG_TUD_HID_EP_BUFSIZE 8

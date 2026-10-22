@@ -8,6 +8,7 @@
 #include "hal.h"
 #include "midi.h"
 #include "version.h"
+#include "kbd.h"
 
 /* platform diagnostics */
 extern uint16_t prev_stage, prev_boots, crash_count;
@@ -16,12 +17,15 @@ int boot_flag_armed(void);
 
 static volatile int detach_requested;
 
-enum { ITF_NUM_MIDI, ITF_NUM_MIDI_STREAMING, ITF_NUM_DFU_RT, ITF_NUM_TOTAL };
-enum { STR_LANG, STR_MANUFACTURER, STR_PRODUCT, STR_DFU_RT, STR_MIDI, STR_JACK_KEYS, STR_JACK_DAW, STR_SERIAL, STR_COUNT };
+enum { ITF_NUM_MIDI, ITF_NUM_MIDI_STREAMING, ITF_NUM_DFU_RT, ITF_NUM_HID, ITF_NUM_TOTAL };
+enum { STR_LANG, STR_MANUFACTURER, STR_PRODUCT, STR_DFU_RT, STR_MIDI, STR_JACK_KEYS, STR_JACK_DAW, STR_SERIAL, STR_HID, STR_COUNT };
 
 #define MIDI_DESC_LEN (TUD_MIDI_DESC_HEAD_LEN + 2 * TUD_MIDI_DESC_JACK_LEN + 2 * TUD_MIDI_DESC_EP_LEN(2))
 #define EP_MIDI_OUT 0x01
 #define EP_MIDI_IN  0x81
+#define EP_HID_IN   0x82
+
+static const uint8_t desc_hid_report[] = {TUD_HID_REPORT_DESC_KEYBOARD()};
 
 static const tusb_desc_device_t desc_device = {
     .bLength = sizeof(tusb_desc_device_t),
@@ -37,7 +41,7 @@ static const tusb_desc_device_t desc_device = {
     .bNumConfigurations = 1,
 };
 
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + MIDI_DESC_LEN + TUD_DFU_RT_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + MIDI_DESC_LEN + TUD_DFU_RT_DESC_LEN + TUD_HID_DESC_LEN)
 
 /* DFU functional values as in NI's descriptor: canDnload | willDetach,
    255 ms detach timeout, 64-byte transfers. */
@@ -49,6 +53,7 @@ static const uint8_t desc_configuration[] = {
     TUD_MIDI_DESC_EP(EP_MIDI_OUT, 64, 2), TUD_MIDI_JACKID_IN_EMB(1), TUD_MIDI_JACKID_IN_EMB(2),
     TUD_MIDI_DESC_EP(EP_MIDI_IN, 64, 2), TUD_MIDI_JACKID_OUT_EMB(1), TUD_MIDI_JACKID_OUT_EMB(2),
     TUD_DFU_RT_DESCRIPTOR(ITF_NUM_DFU_RT, STR_DFU_RT, 0x09, 255, 64),
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID, STR_HID, HID_ITF_PROTOCOL_NONE, sizeof desc_hid_report, EP_HID_IN, 8, 5),
 };
 
 const uint8_t *tud_descriptor_device_cb(void)
@@ -73,6 +78,7 @@ static int build_string(uint8_t index, char *s)
     case STR_JACK_KEYS:    t = "My Kontrol Keys"; break;
     case STR_JACK_DAW:     t = "My Kontrol DAW"; break;
     case STR_DFU_RT:       t = "My Kontrol Update"; break;
+    case STR_HID:          t = "My Kontrol Navigation"; break;
     case STR_PRODUCT:
         for (t = "My Kontrol "; *t; ) *p++ = *t++;
         t = board_info.short_name;
@@ -180,6 +186,54 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_contro
     return false;
 }
 
+/* ---------- keyboard taps (core/kbd.h) ---------- */
+
+#define TAPS 32
+static uint8_t tap_mod[TAPS], tap_key[TAPS], tap_head, tap_tail, key_down;
+
+void kbd_tap(uint8_t modifier, uint8_t key)
+{
+    uint8_t next = (tap_head + 1) % TAPS;
+    if (next == tap_tail || !tud_mounted())
+        return;
+    tap_mod[tap_head] = modifier;
+    tap_key[tap_head] = key;
+    tap_head = next;
+}
+
+/* one report per poll: press, then release */
+static void kbd_task(void)
+{
+    if (!tud_hid_ready())
+        return;
+    if (key_down) {
+        tud_hid_keyboard_report(0, 0, NULL);
+        key_down = 0;
+    } else if (tap_tail != tap_head) {
+        uint8_t keys[6] = {tap_key[tap_tail]};
+        tud_hid_keyboard_report(0, tap_mod[tap_tail], keys);
+        tap_tail = (tap_tail + 1) % TAPS;
+        key_down = 1;
+    }
+}
+
+const uint8_t *tud_hid_descriptor_report_cb(uint8_t instance)
+{
+    (void)instance;
+    return desc_hid_report;
+}
+
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t id, hid_report_type_t type, uint8_t *buf, uint16_t len)
+{
+    (void)instance; (void)id; (void)type; (void)buf; (void)len;
+    return 0;
+}
+
+void tud_hid_set_report_cb(uint8_t instance, uint8_t id, hid_report_type_t type, const uint8_t *buf, uint16_t len)
+{
+    (void)instance; (void)id; (void)type; (void)buf; (void)len;
+}
+
 /* Called from tud_task before the status stage has gone out; usb_task reboots. */
 void tud_dfu_runtime_reboot_to_dfu_cb(void)
 {
@@ -226,6 +280,7 @@ void usb_task(void)
         while (midi_tx_peek(pkt))
             midi_tx_pop();
     }
+    kbd_task();
     if (detach_requested) {
         hal_delay_ms(10);              /* let the ISR send the DETACH status stage */
         app_enter_bootloader();
