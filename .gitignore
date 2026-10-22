@@ -14,3 +14,6 @@ re/logs/
 *.zip
 firmware/test/out/
 node_modules/
+
+# commercial fonts (licensed to the project owner, not redistributable)
+web/fonts/ABCGaisyr*

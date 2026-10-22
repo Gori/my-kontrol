@@ -10,7 +10,6 @@ It includes or links the following, under their own licenses:
 | STM32F1 device headers | `firmware/lib/cmsis_device_f1` (submodule) | Apache-2.0, (c) STMicroelectronics |
 | Spleen bitmap fonts 5x8, 8x16, 12x24 | `fonts/spleen`, compiled into `firmware/core/fonts.h` | BSD-2-Clause, (c) 2018-2026 Frederic Cambus |
 | fflate | `web/vendor/fflate.js` | MIT, (c) 2023 Arjun Barrett |
-| Geist | `web/fonts` | SIL Open Font License 1.1, (c) 2023 Vercel |
 
 ## Spleen license (required in binary distributions)
 

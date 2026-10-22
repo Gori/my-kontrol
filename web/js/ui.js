@@ -4,6 +4,10 @@ export const $ = (id) => document.getElementById(id);
 
 export function initOled() {}
 
+const VIEWS = ['unsupported', 'connect', 'choose', 'flash', 'done', 'error'];
+const STEP_OF_VIEW = { connect: 'connect', choose: 'choose', flash: 'flash', done: 'done' };
+const ORDER = ['connect', 'choose', 'flash', 'done'];
+
 export function showView(name, { focus = true } = {}) {
   for (const v of VIEWS) $(`view-${v}`).hidden = v !== name;
   const step = STEP_OF_VIEW[name];

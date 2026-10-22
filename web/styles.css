@@ -1,9 +1,13 @@
 /* My Kontrol Installer */
 
 @font-face {
-  font-family: "Geist";
-  src: url("fonts/Geist-Variable.woff2") format("woff2");
-  font-weight: 100 900;
+  font-family: "ABC Gaisyr";
+  src: url("fonts/ABCGaisyr-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "ABC Gaisyr Mono";
+  src: url("fonts/ABCGaisyrMono-Regular.woff2") format("woff2");
   font-display: swap;
 }
 
@@ -16,7 +20,8 @@
   --warn: #9a5b00;
   --bad: #b3261e;
   --good: #1a7f37;
-  --sans: "Geist", ui-sans-serif, sans-serif;
+  --sans: "ABC Gaisyr", ui-sans-serif, sans-serif;
+  --mono: "ABC Gaisyr Mono", ui-monospace, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -31,8 +36,8 @@ body {
 
 a { color: inherit; text-underline-offset: 3px; text-decoration-color: #bbb; }
 a:hover { text-decoration-color: currentColor; }
-b, strong { font-weight: 600; }
-code { font: 0.875em ui-monospace, monospace; background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+b, strong { font-weight: 400; }
+code { font: 0.875em var(--mono); background: var(--soft); padding: 1px 5px; border-radius: 4px; }
 
 .skip { position: absolute; left: -9999px; }
 .skip:focus { left: 16px; top: 16px; background: var(--ink); color: var(--bg); padding: 6px 10px; }
@@ -43,14 +48,13 @@ code { font: 0.875em ui-monospace, monospace; background: var(--soft); padding: 
 .shell { max-width: 600px; margin: 0 auto; padding: 72px 24px 40px; }
 
 .intro { margin-bottom: 56px; }
-.title { font-size: 40px; line-height: 1.1; font-weight: 600; letter-spacing: -0.03em; margin: 0 0 12px; }
+.title { font-size: 48px; line-height: 1.05; font-weight: 400; letter-spacing: -0.03em; margin: 0 0 12px; }
 .lead { font-size: 18px; color: var(--dim); margin: 0; max-width: 34em; }
 
 .section {
-  font-size: 13px;
-  font-weight: 600;
+  font: 12px/1.4 var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   color: var(--dim);
   margin: 56px 0 16px;
 }
@@ -61,7 +65,7 @@ code { font: 0.875em ui-monospace, monospace; background: var(--soft); padding: 
   border-radius: 12px;
   padding: 28px;
 }
-h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; outline: none; }
+h3 { font-size: 22px; font-weight: 400; letter-spacing: -0.01em; margin: 0 0 6px; outline: none; }
 p { margin: 0 0 12px; }
 .lede, .muted, .device-meta, .phase, .progress-text { color: var(--dim); }
 .small { font-size: 14px; color: var(--dim); }
@@ -69,7 +73,7 @@ p { margin: 0 0 12px; }
 .actions { display: flex; align-items: center; gap: 20px; margin-top: 24px; }
 .btn {
   font: inherit;
-  font-weight: 500;
+  font-weight: 400;
   border: 0;
   border-radius: 8px;
   padding: 11px 20px;
@@ -94,9 +98,9 @@ p { margin: 0 0 12px; }
 .choice:first-of-type { border-top: 0; }
 .choice input { accent-color: var(--ink); width: 16px; height: 16px; margin: 4px 0 0; flex: none; }
 .choice-body { display: flex; flex-direction: column; }
-.choice-title { font-weight: 500; }
+.choice-title { font-weight: 400; }
 .choice-desc { color: var(--dim); font-size: 14px; }
-.tag { color: var(--dim); font-weight: 400; font-size: 14px; margin-left: 6px; }
+.tag { color: var(--dim); font: 13px var(--mono); margin-left: 6px; }
 .sub { padding: 0 0 14px 28px; }
 .drop {
   margin: 8px 0 4px; padding: 20px 16px; border: 1px dashed #ccc; border-radius: 8px;
@@ -125,15 +129,15 @@ summary:hover { color: var(--ink); }
 
 .log { display: none; margin-top: 24px; }
 .views:has(#view-error:not([hidden])) .log { display: block; }
-.log pre { max-height: 200px; overflow: auto; margin: 8px 0 4px; padding: 12px; font: 12px/1.5 ui-monospace, monospace; color: var(--dim); background: var(--soft); border-radius: 8px; white-space: pre-wrap; }
+.log pre { max-height: 200px; overflow: auto; margin: 8px 0 4px; padding: 12px; font: 12px/1.5 var(--mono); color: var(--dim); background: var(--soft); border-radius: 8px; white-space: pre-wrap; }
 
 /* information */
 .facts { list-style: none; margin: 0; padding: 0; }
 .facts li { padding: 10px 0; border-top: 1px solid var(--line); color: var(--dim); }
 .facts li:first-child { border-top: 0; padding-top: 0; }
-.facts b { color: var(--ink); font-weight: 500; }
+.facts b { color: var(--ink); font-weight: 400; }
 .body { color: var(--dim); }
-.body b { color: var(--ink); font-weight: 500; }
+.body b { color: var(--ink); font-weight: 400; }
 
 .foot { max-width: 600px; margin: 0 auto; padding: 24px 24px 48px; font-size: 13px; color: #999; border-top: 1px solid var(--line); }
 
