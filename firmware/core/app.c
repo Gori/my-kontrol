@@ -163,30 +163,119 @@ static void knob_touched(uint8_t k, int touched)
 
 /* ---------- buttons ---------- */
 
-/* Mackie Control keys with their Shift variants */
+/* Mackie Control keys with their Shift variants. Mute, Solo, Plug-in and
+   Track are knob-mode buttons and handled in knob_target_* below. */
 static const struct { uint8_t ctl, mcu, mcu_shift; } mcu_keys[] = {
-    {CTL_UNDO,        MCU_UNDO,          MCU_UNDO},        /* Shift = redo: MCU Shift held */
-    {CTL_QUANTIZE,    MCU_F1,            MCU_F1 + 4},
-    {CTL_IDEAS,       MCU_F1 + 1,        MCU_F1 + 5},
-    {CTL_LOOP,        MCU_CYCLE,         MCU_CYCLE},
-    {CTL_METRO,       MCU_CLICK,         MCU_CLICK},
-    {CTL_PLAY,        MCU_PLAY,          MCU_REWIND},      /* Shift = back to start */
-    {CTL_REC,         MCU_RECORD,        MCU_RECORD},
-    {CTL_STOP,        MCU_STOP,          MCU_STOP},
-    {CTL_PRESET_UP,   MCU_UP,            MCU_BANK_LEFT},
-    {CTL_PRESET_DOWN, MCU_DOWN,          MCU_BANK_RIGHT},
-    {CTL_MUTE,        MCU_MUTE,          MCU_MUTE},        /* strip 1 of the bank */
-    {CTL_SOLO,        MCU_SOLO,          MCU_SOLO},
-    {CTL_PLUGIN,      MCU_ASSIGN_PLUGIN, MCU_ASSIGN_INSTR},
-    {CTL_TRACK,       MCU_ASSIGN_PAN,    MCU_ASSIGN_SEND},
-    {CTL_NAV_UP,      MCU_UP,            MCU_UP},
-    {CTL_NAV_DOWN,    MCU_DOWN,          MCU_DOWN},
-    {CTL_NAV_LEFT,    MCU_LEFT,          MCU_BANK_LEFT},
-    {CTL_NAV_RIGHT,   MCU_RIGHT,         MCU_BANK_RIGHT},
-    {CTL_NAV_PUSH,    MCU_ENTER,         MCU_ENTER},
+    {CTL_UNDO,        MCU_UNDO,       MCU_UNDO},        /* Shift = redo: MCU Shift held */
+    {CTL_QUANTIZE,    MCU_F1,         MCU_F1 + 4},
+    {CTL_IDEAS,       MCU_F1 + 1,     MCU_F1 + 5},
+    {CTL_LOOP,        MCU_CYCLE,      MCU_CYCLE},
+    {CTL_METRO,       MCU_CLICK,      MCU_CLICK},
+    {CTL_PLAY,        MCU_PLAY,       MCU_REWIND},      /* Shift = back to start */
+    {CTL_REC,         MCU_RECORD,     MCU_RECORD},
+    {CTL_STOP,        MCU_STOP,       MCU_STOP},
+    {CTL_PRESET_UP,   MCU_BANK_LEFT,  MCU_CH_LEFT},     /* page the knobs by 8 (Shift: by 1) */
+    {CTL_PRESET_DOWN, MCU_BANK_RIGHT, MCU_CH_RIGHT},
+    {CTL_MUTE,        MCU_MUTE,       MCU_MUTE},        /* Shift only: strip 1 of the bank */
+    {CTL_SOLO,        MCU_SOLO,       MCU_SOLO},
+    {CTL_NAV_UP,      MCU_UP,         MCU_UP},          /* previous / next track */
+    {CTL_NAV_DOWN,    MCU_DOWN,       MCU_DOWN},
+    {CTL_NAV_LEFT,    MCU_LEFT,       MCU_BANK_LEFT},
+    {CTL_NAV_RIGHT,   MCU_RIGHT,      MCU_BANK_RIGHT},
+    {CTL_NAV_PUSH,    MCU_ENTER,      MCU_ENTER},
 };
 #define MCU_KEYS (sizeof mcu_keys / sizeof mcu_keys[0])
 static uint8_t mcu_sent[MCU_KEYS];        /* note sent on press, released on release */
+
+/* ---------- knob modes: what the knobs control in a DAW ---------- */
+
+static const uint8_t target_view[KM_COUNT] = {
+    VIEW_DEVICE, VIEW_DEVICE, VIEW_DEVICE, VIEW_VOLUME, VIEW_PAN, VIEW_SENDS,
+};
+static const uint8_t target_assign[KM_COUNT] = {
+    0, MCU_ASSIGN_INSTR, MCU_ASSIGN_PLUGIN, MCU_ASSIGN_PAN, MCU_ASSIGN_PAN, MCU_ASSIGN_SEND,
+};
+static uint8_t sync_tries;                 /* Mackie: presses left to reach the target */
+static uint32_t sync_ms;
+
+static void knob_target_set(uint8_t t, int announce)
+{
+    settings.knob_target = t;
+    settings_touch();
+    sync_tries = 4;
+    sync_ms = 0;
+    if (app_link() == LINK_HOST)
+        host_set_view(target_view[t]);
+    if (announce)
+        ui_notify("Knobs", knob_target_names[t]);
+    ui_invalidate();
+}
+
+static void knob_target_step(int d)
+{
+    int n = KNOB_MODE_SLOTS, cur = -1;
+    for (int i = 0; i < n; i++)
+        if (settings.knob_modes[i] == settings.knob_target)
+            cur = i;
+    for (int k = 1; k <= n; k++) {
+        int i = ((cur < 0 ? 0 : cur) + d * k + 2 * n) % n;
+        uint8_t t = settings.knob_modes[i];
+        if (t == KM_OFF)
+            continue;
+        /* Live has one device view for instruments and plug-ins */
+        if (app_link() == LINK_HOST && target_view[t] == target_view[settings.knob_target] &&
+            host.view != VIEW_CLIPS)
+            continue;
+        knob_target_set(t, 1);
+        return;
+    }
+}
+
+/* Mackie: press the assignment (and Flip for volume) until the DAW's LEDs
+   say the knobs are where we want them. A few tries only: a DAW that does
+   not light these LEDs is not pressed forever. */
+static void knob_target_sync(void)
+{
+    if (app_link() != LINK_MACKIE || !sync_tries || now_ms - sync_ms < 300)
+        return;
+    uint8_t t = settings.knob_target, a = target_assign[t];
+    int want_flip = t == KM_VOLUME, flipped = mcu_led[MCU_FLIP] != 0;
+    if (!mcu_led[a]) {
+        if (flipped) {
+            mcu_button(MCU_FLIP, 1);
+            mcu_button(MCU_FLIP, 0);
+        }
+        mcu_button(a, 1);
+        mcu_button(a, 0);
+    } else if (want_flip != flipped) {
+        mcu_button(MCU_FLIP, 1);
+        mcu_button(MCU_FLIP, 0);
+    } else {
+        sync_tries = 0;
+        return;
+    }
+    sync_tries--;
+    sync_ms = now_ms;
+}
+
+/* M / S step the knob mode, Plug-in and Track jump to instrument and
+   volume. Returns 1 if the button was one of them. */
+static int knob_mode_button(uint8_t ctl, int down, int link)
+{
+    if (ctl != CTL_MUTE && ctl != CTL_SOLO && ctl != CTL_PLUGIN && ctl != CTL_TRACK)
+        return 0;
+    if (shift && (ctl == CTL_MUTE || ctl == CTL_SOLO))
+        return 0;                          /* Shift + M / S: mute / solo */
+    if (!down)
+        return 1;
+    if (ctl == CTL_MUTE || ctl == CTL_SOLO)
+        knob_target_step(ctl == CTL_SOLO ? 1 : -1);
+    else if (ctl == CTL_PLUGIN)
+        knob_target_set(shift && link == LINK_MACKIE ? KM_PLUGIN : KM_INSTRUMENT, 1);
+    else
+        knob_target_set(shift ? KM_SENDS : KM_VOLUME, 1);
+    return 1;
+}
 
 static int mackie_button(uint8_t ctl, int down)
 {
@@ -374,8 +463,11 @@ static void local_button(uint8_t ctl, int down)
         return;
     case CTL_PRESET_UP:
     case CTL_PRESET_DOWN:
+    case CTL_MUTE:
+    case CTL_SOLO:
         if (down) {
-            settings.knob_page = (settings.knob_page + (ctl == CTL_PRESET_UP ? 1 : KNOB_PAGES - 1)) % KNOB_PAGES;
+            int up = ctl == CTL_PRESET_UP || ctl == CTL_SOLO;
+            settings.knob_page = (settings.knob_page + (up ? 1 : KNOB_PAGES - 1)) % KNOB_PAGES;
             notify_int("Knob Page", settings.knob_page + 1, 0);
             app_settings_changed();
         }
@@ -496,18 +588,20 @@ static void button(uint8_t ctl, int down)
 
     switch (link) {
     case LINK_HOST:
-        if (ctl == CTL_PLUGIN || ctl == CTL_TRACK || ctl == CTL_BROWSER) {
+        if (ctl == CTL_BROWSER) {
             if (down) {
-                static const char *const names[] = {"Device", "Mixer", "Clips"};
-                uint8_t v = ctl == CTL_PLUGIN ? VIEW_DEVICE : ctl == CTL_TRACK ? VIEW_MIXER : VIEW_CLIPS;
-                host_set_view(v);
-                ui_notify("View", names[v]);
+                host_set_view(host.view == VIEW_CLIPS ? target_view[settings.knob_target] : VIEW_CLIPS);
+                ui_notify("View", host.view == VIEW_CLIPS ? "Clips" : knob_target_names[settings.knob_target]);
             }
             return;
         }
+        if (knob_mode_button(ctl, down, link))
+            return;
         host_button(ctl, down);
         return;
     case LINK_MACKIE:
+        if (knob_mode_button(ctl, down, link))
+            return;
         mackie_button(ctl, down);
         return;
     default:
@@ -600,6 +694,17 @@ static void track_beats(int link)
     }
 }
 
+/* Plug-in lit for instrument / plug-in knobs, Track for mixer knobs,
+   M and S available */
+static void target_lights(uint8_t *level, uint8_t dim, int clips)
+{
+    uint8_t t = settings.knob_target;
+    int dev = t == KM_INSTRUMENT || t == KM_PLUGIN;
+    level[CTL_PLUGIN] = !clips && dev ? 255 : dim;
+    level[CTL_TRACK] = !clips && !dev ? 255 : dim;
+    level[CTL_MUTE] = level[CTL_SOLO] = dim;
+}
+
 static uint8_t host_level(uint8_t state, uint8_t dim, int blink)
 {
     switch (state) {
@@ -632,14 +737,14 @@ static void update_lights(void)
         level[CTL_QUANTIZE] = settings.sp.repeat_on ? on : dim;
         level[CTL_IDEAS] = learning ? (blink ? on : dim) : settings.sp.chord == CHORD_MEMORY ? on : dim;
         level[CTL_PRESET_UP] = level[CTL_PRESET_DOWN] = dim;
+        level[CTL_MUTE] = level[CTL_SOLO] = dim;
         if (settings.clock_out && !settings.sp.ext_clock)
             level[CTL_PLAY] = level[CTL_STOP] = dim;
         break;
     case LINK_MACKIE: {
         static const uint8_t mirror[][2] = {
             {CTL_LOOP, MCU_CYCLE}, {CTL_METRO, MCU_CLICK}, {CTL_PLAY, MCU_PLAY},
-            {CTL_REC, MCU_RECORD}, {CTL_STOP, MCU_STOP}, {CTL_MUTE, MCU_MUTE},
-            {CTL_SOLO, MCU_SOLO}, {CTL_PLUGIN, MCU_ASSIGN_PLUGIN}, {CTL_TRACK, MCU_ASSIGN_PAN},
+            {CTL_REC, MCU_RECORD}, {CTL_STOP, MCU_STOP},
         };
         for (unsigned i = 0; i < sizeof mirror / sizeof mirror[0]; i++) {
             uint8_t s = mcu_led[mirror[i][1]];
@@ -647,6 +752,7 @@ static void update_lights(void)
         }
         level[CTL_UNDO] = level[CTL_QUANTIZE] = level[CTL_IDEAS] = dim;
         level[CTL_PRESET_UP] = level[CTL_PRESET_DOWN] = dim;
+        target_lights(level, dim, 0);
         break;
     }
     case LINK_HOST:
@@ -656,8 +762,7 @@ static void update_lights(void)
                 level[c] = host_level(host.light[c], dim, blink);
         if (host.light[CTL_TEMPO])
             level[CTL_TEMPO] = host_level(host.light[CTL_TEMPO], dim, blink) | level[CTL_TEMPO];
-        level[CTL_PLUGIN] = host.view == VIEW_DEVICE ? on : dim;
-        level[CTL_TRACK] = host.view == VIEW_MIXER ? on : dim;
+        target_lights(level, dim, host.view == VIEW_CLIPS);
         level[CTL_BROWSER] = ui_menu_open() || host.view == VIEW_CLIPS ? on : dim;
         break;
     }
@@ -710,6 +815,15 @@ void app_poll(void)
     host_tick_ms(dt);
     settings_tick_ms(dt, !play_keys_down() && !sp_engine_playing());
     screensaver(dt);
+
+    knob_target_sync();
+    static int last_link = -1;
+    int link = app_link();
+    if (link != last_link) {               /* a DAW appeared: put the knobs where they were */
+        last_link = link;
+        if (link != LINK_NONE)
+            knob_target_set(settings.knob_target, 0);
+    }
 
     static uint32_t light_acc;
     light_acc += dt;

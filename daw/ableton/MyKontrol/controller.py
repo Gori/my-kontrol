@@ -8,6 +8,7 @@ from . import protocol as p
 from .transport import TransportComponent
 from .device_view import DeviceView
 from .mixer_view import MixerView
+from .sends_view import SendsView
 from .clip_view import ClipView
 from .liveutil import DefaultBanks
 
@@ -21,7 +22,9 @@ class Controller(object):
         self.transport = TransportComponent(song, display)
         self.views = {
             p.VIEW_DEVICE: DeviceView(song, display, banks or DefaultBanks()),
-            p.VIEW_MIXER: MixerView(song, display),
+            p.VIEW_VOLUME: MixerView(song, display),
+            p.VIEW_PAN: MixerView(song, display, pan=True),
+            p.VIEW_SENDS: SendsView(song, display),
             p.VIEW_CLIPS: ClipView(song, display, highlight),
         }
         self.view_id = p.VIEW_DEVICE

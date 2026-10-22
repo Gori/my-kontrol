@@ -123,7 +123,7 @@ class Connection(unittest.TestCase):
             if i % 14 == 0:
                 h.engine.tick()
             if i % 100 == 0:
-                h.engine.receive(p.view((i // 100) % 3))
+                h.engine.receive(p.view((i // 100) % len(p.VIEWS)))
             h.engine.receive(p.knob_turn(i % 8, 3 if i % 2 else -2))
         sent = h.wire.sent
         for i, (t, _) in enumerate(sent):
@@ -134,8 +134,8 @@ class Connection(unittest.TestCase):
     def test_device_owned_lights_are_never_sent(self):
         h = Harness()
         h.connect()
-        h.view(p.VIEW_CLIPS)
-        h.view(p.VIEW_MIXER)
+        for view_id in p.VIEWS:
+            h.view(view_id)
         for c in p.DEVICE_OWNED_CONTROLS:
             self.assertNotIn(c, h.screen.lights)
 
@@ -162,9 +162,9 @@ class Connection(unittest.TestCase):
         h = Harness()
         h.engine.start()
         h.engine.receive(p.hi())
-        h.engine.receive(p.ident(view=p.VIEW_MIXER))
+        h.engine.receive(p.ident(view=p.VIEW_SENDS))
         h.settle()
-        self.assertEqual(h.text(p.TEXT_BANK), "Volume")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Send A")
 
     def test_bye_on_stop(self):
         h = Harness()
@@ -241,46 +241,77 @@ class DeviceView(unittest.TestCase):
         self.assertEqual(param.gestures, ["begin", "end"])
 
 
-class MixerView(unittest.TestCase):
+class MixerViews(unittest.TestCase):
 
-    def test_volume_and_shift_pan(self):
+    def test_volume_view(self):
         h = Harness(n_tracks=10, n_returns=2)
         h.connect()
-        h.view(p.VIEW_MIXER)
-        self.assertEqual(h.text(p.TEXT_BANK), "Volume")
+        h.view(p.VIEW_VOLUME)
+        self.assertEqual(h.text(p.TEXT_BANK), "")         # the keyboard draws the mode name
         self.assertEqual(h.text(p.TEXT_SUBTITLE), "Tracks 1-8")
         self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 2), "Track 3")
+        self.assertEqual(h.text(p.TEXT_KNOB_VALUE + 2), "0.85 dB")
         h.send(p.knob_turn(2, -10))
         self.assertAlmostEqual(h.song.visible_tracks[2].mixer_device.volume.value, 0.8)
+        # Shift no longer switches to pan.
         h.send(p.button(p.CTL_SHIFT, True))
-        h.settle()
-        self.assertEqual(h.text(p.TEXT_BANK), "Pan")
+        h.send(p.knob_turn(0, 10))
+        h.send(p.button(p.CTL_SHIFT, False))
+        self.assertAlmostEqual(h.song.visible_tracks[0].mixer_device.panning.value, 0.0)
+
+    def test_pan_view(self):
+        h = Harness()
+        h.connect()
+        h.view(p.VIEW_PAN)
         self.assertEqual(h.screen.params[0], (64, p.PARAM_MAPPED | p.PARAM_BIPOLAR))
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Track 1")
         h.send(p.knob_turn(0, 10))
         self.assertAlmostEqual(h.song.visible_tracks[0].mixer_device.panning.value, 0.1)
-        h.send(p.button(p.CTL_SHIFT, False))
 
-    def test_banking_and_selection_follow(self):
+    def test_preset_pages_tracks_and_selection_follows(self):
         h = Harness(n_tracks=10, n_returns=2)
         h.connect()
-        h.view(p.VIEW_MIXER)
-        h.press(p.CTL_NAV_RIGHT)
+        h.view(p.VIEW_VOLUME)
+        h.press(p.CTL_PRESET_DOWN)
         h.settle()
         self.assertEqual(h.text(p.TEXT_SUBTITLE), "Tracks 9-13")
         self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 2), "Return A")
         self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 4), "Master")
         self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 5), "")
-        # Selecting a track in bank 1 brings bank 1 back.
-        h.song.view.selected_track = h.song.visible_tracks[1]
+        h.press(p.CTL_PRESET_UP)
         h.settle()
         self.assertEqual(h.text(p.TEXT_SUBTITLE), "Tracks 1-8")
+        # 4D right selects the next track; selecting past the page flips it.
+        for _ in range(8):
+            h.press(p.CTL_NAV_RIGHT)
+        h.settle()
+        self.assertEqual(h.text(p.TEXT_TRACK), "Track 9")
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Tracks 9-13")
+
+    def test_sends_view(self):
+        h = Harness(n_returns=2)
+        h.connect()
+        h.view(p.VIEW_SENDS)
+        self.assertEqual(h.text(p.TEXT_SUBTITLE), "Sends A-B")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL), "Return A")
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 1), "Return B")
+        self.assertEqual(h.text(p.TEXT_KNOB_VALUE), "0.00 dB")
+        self.assertEqual(h.screen.params[1][1], p.PARAM_MAPPED)
+        self.assertEqual(h.screen.params[2], (0, 0))
+        self.assertEqual(h.text(p.TEXT_KNOB_LABEL + 2), "")
+        h.send(p.knob_turn(1, 20))
+        self.assertAlmostEqual(h.song.visible_tracks[0].mixer_device.sends[1].value, 0.1)
+        h.send(p.encoder_turn(1))
+        h.send(p.knob_turn(0, 20))
+        self.assertAlmostEqual(h.song.visible_tracks[1].mixer_device.sends[0].value, 0.1)
 
     def test_push_arms(self):
-        h = Harness()
-        h.connect()
-        h.view(p.VIEW_MIXER)
-        h.press(p.CTL_NAV_PUSH)
-        self.assertTrue(h.song.visible_tracks[0].arm)
+        for view_id in (p.VIEW_VOLUME, p.VIEW_PAN, p.VIEW_SENDS):
+            h = Harness()
+            h.connect()
+            h.view(view_id)
+            h.press(p.CTL_NAV_PUSH)
+            self.assertTrue(h.song.visible_tracks[0].arm)
 
 
 class ClipView(unittest.TestCase):
@@ -371,11 +402,12 @@ class Transport(unittest.TestCase):
         s.can_redo = True
         h.press(p.CTL_UNDO, shift=True)
         self.assertEqual(s.calls[-1], "redo")
-        h.press(p.CTL_MUTE)
-        h.press(p.CTL_SOLO)
+        # The keyboard keeps plain Mute/Solo (knob modes); Shift+Mute/Solo come here.
+        h.press(p.CTL_MUTE, shift=True)
         h.press(p.CTL_SOLO, shift=True)
         t = s.visible_tracks[0]
-        self.assertTrue(t.mute and t.solo and t.arm)
+        self.assertTrue(t.mute and t.solo)
+        self.assertFalse(t.arm)
         h.settle()
         self.assertEqual(h.screen.lights[p.CTL_REC], p.LIGHT_ON)
         self.assertEqual(h.screen.lights[p.CTL_MUTE], p.LIGHT_ON)

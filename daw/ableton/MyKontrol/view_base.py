@@ -1,4 +1,4 @@
-# Base class for the three views (device, mixer, clips).
+# Base class for the views (device, volume, pan, sends, clips).
 #
 # Copyright (C) 2026 The My Kontrol contributors
 # SPDX-License-Identifier: GPL-3.0-or-later

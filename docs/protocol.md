@@ -36,7 +36,7 @@ whenever the device sends `VIEW` or `REFRESH`.
 |---|---|---|
 | 0x01 | IDENT | proto=1, board, fw_major, fw_minor, fw_patch, keys, knobs, caps, view |
 | 0x02 | HI | proto=1 |
-| 0x05 | VIEW | view: 0 device, 1 mixer, 2 clips |
+| 0x05 | VIEW | view: 0 device, 1 volume, 2 clips, 3 pan, 4 sends |
 | 0x06 | REFRESH | none; the host re-sends everything for the current view |
 
 - `board`: 1 = Komplete Kontrol M32. Future boards get the next numbers (see `docs/porting.md`).
@@ -64,10 +64,17 @@ The device keeps handling these itself:
 - Shift+Browser, which opens the device menu
 - the view buttons:
   - Plug-in → device view
-  - Track → mixer view
+  - Track → volume view
   - Browser → clip view
+- Mute and Solo without Shift: previous / next knob mode, in the order the
+  user set on the keyboard (default: device, volume, pan, sends)
 
-A view button sends `VIEW` and is not forwarded as a note.
+Changing the view sends `VIEW`; these presses are not forwarded as notes.
+Shift + Mute and Shift + Solo are forwarded as the Mute and Solo notes
+(with Shift held).
+
+The device remembers the last view across restarts and announces it in
+`IDENT`.
 
 ### Control IDs
 
@@ -177,15 +184,16 @@ is "Quantize" / "1/16".
 
 This is what the Ableton Live script does.
 
-| Control | Device view | Mixer view | Clip view |
-|---|---|---|---|
-| Knobs | 8 parameters of the selected device bank | volume of 8 tracks (Shift: pan) | volume of the 8 grid tracks |
-| 4D turn | select track | select track | cursor up / down one scene |
-| 4D left / right | select track | bank tracks by 8 | move cursor (scrolls past the edge) |
-| 4D up / down | previous / next device | select track | move cursor |
-| 4D push | toggle device on/off | arm selected track | launch clip (Shift: launch scene) |
-| Preset ↑ / ↓ | previous / next parameter bank | — | page scenes by 4 |
-| Shift + Preset ↑ / ↓ | previous / next device | — | — |
+| Control | Device | Volume / Pan | Sends | Clips |
+|---|---|---|---|---|
+| Knobs | 8 parameters of the selected device bank | volume / pan of 8 tracks | sends A-H of the selected track | volume of the 8 grid tracks |
+| Labels (TEXT 0x10+) | parameter names | track names | send names | track names |
+| 4D turn | select track | select track | select track | cursor up / down one scene |
+| 4D left / right | select track | select track | select track | move cursor (scrolls past the edge) |
+| 4D up / down | previous / next device | select track | select track | move cursor |
+| 4D push | toggle device on/off | arm selected track | arm selected track | launch clip (Shift: launch scene) |
+| Preset ↑ / ↓ | previous / next parameter bank | tracks 1-8 / 9-16 / ... | — | page scenes by 4 |
+| Shift + Preset ↑ / ↓ | previous / next device | — | — | — |
 
 | Button | Press | Shift + press |
 |---|---|---|
@@ -198,7 +206,7 @@ This is what the Ableton Live script does.
 | Undo | undo | redo |
 | Quantize | quantize the selected clip | — |
 | Ideas | capture MIDI | — |
-| Mute | mute the selected track | — |
-| Solo | solo the selected track | arm the selected track |
+| Mute | (device: previous knob mode) | mute the selected track |
+| Solo | (device: next knob mode) | solo the selected track |
 
 The Ideas light is on while capture is available.

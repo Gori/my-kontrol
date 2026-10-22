@@ -41,8 +41,14 @@ BYTE_LIMIT = 1024
 
 CONTROL_BY_NAME = {name: cid for cid, name in p.CONTROL_NAMES.items()}
 VIEW_BY_NAME = {"device": p.VIEW_DEVICE, "plugin": p.VIEW_DEVICE,
-                "mixer": p.VIEW_MIXER, "track": p.VIEW_MIXER,
+                "volume": p.VIEW_VOLUME, "track": p.VIEW_VOLUME,
+                "pan": p.VIEW_PAN, "sends": p.VIEW_SENDS,
                 "clips": p.VIEW_CLIPS, "clip": p.VIEW_CLIPS, "browser": p.VIEW_CLIPS}
+# Knob modes that Mute / Solo (without Shift) step through, keyboard default.
+MODE_ORDER = (p.VIEW_DEVICE, p.VIEW_VOLUME, p.VIEW_PAN, p.VIEW_SENDS)
+# View buttons the keyboard handles itself.
+VIEW_BUTTONS = {p.CTL_PLUGIN: p.VIEW_DEVICE, p.CTL_TRACK: p.VIEW_VOLUME,
+                p.CTL_BROWSER: p.VIEW_CLIPS}
 
 HELP = """\
 commands (controls by name or ID; knobs are 1-8):
@@ -52,7 +58,9 @@ commands (controls by name or ID; knobs are 1-8):
   t <knob> [on|off]    touch a knob (no arg: touch and release)
   e <delta>            turn the 4D encoder
   up down left right push    4D buttons (prefix "shift" to hold Shift)
-  view device|mixer|clips    view buttons (sends VIEW)
+  view device|volume|pan|sends|clips   change view (sends VIEW)
+  b mute / b solo      previous / next knob mode (handled by the keyboard);
+                       b shift+mute / b shift+solo go to the host
   refresh              send REFRESH
   screen               show what the device displays
   reset                simulate a reboot (leave host mode, send HI)
@@ -68,6 +76,7 @@ class Simulator(object):
         self.screen = Screen()
         self.host_mode = False
         self.view = p.VIEW_DEVICE
+        self.shift = False
         self.last_rx = 0.0
         self.last_hi = 0.0
         self.quiet = not verbose
@@ -127,8 +136,6 @@ class Simulator(object):
                 if decoded.proto != p.PROTOCOL_VERSION:
                     self.say("-- HELLO for protocol %d ignored" % decoded.proto)
                     return
-                # The 9th IDENT byte (current view) is a proposed extension;
-                # see README.md "Spec gaps".
                 self.send(p.ident(board=1, fw=(0, 1, 0), keys=32, knobs=8, caps=self.caps,
                                   view=self.view))
                 if not self.host_mode:
@@ -174,12 +181,34 @@ class Simulator(object):
             self.send(message)
             return True
 
+    def button(self, control, pressed):
+        """A button as the keyboard handles it: some stay local."""
+        with self.lock:
+            if control == p.CTL_SHIFT:
+                self.shift = pressed
+            elif control in VIEW_BUTTONS:
+                if pressed and not self.shift:   # Shift+Browser: device menu
+                    self.set_view(VIEW_BUTTONS[control])
+                return True
+            elif control in (p.CTL_MUTE, p.CTL_SOLO) and not self.shift:
+                if pressed:
+                    self.step_mode(-1 if control == p.CTL_MUTE else 1)
+                return True
+            return self.control(p.button(control, pressed))
+
+    def step_mode(self, direction):
+        if self.view in MODE_ORDER:
+            i = (MODE_ORDER.index(self.view) + direction) % len(MODE_ORDER)
+        else:
+            i = 0 if direction > 0 else len(MODE_ORDER) - 1
+        self.set_view(MODE_ORDER[i])
+
     def press(self, controls):
         for c in controls:
-            if not self.control(p.button(c, True)):
+            if not self.button(c, True):
                 return
         for c in reversed(controls):
-            self.control(p.button(c, False))
+            self.button(c, False)
 
     def set_view(self, view_id):
         with self.lock:
@@ -236,10 +265,10 @@ def run_command(sim, line):
             sim.press(parse_controls(args[0]))
         elif cmd == "hold" and args:
             for c in parse_controls(args[0]):
-                sim.control(p.button(c, True))
+                sim.button(c, True)
         elif cmd in ("rel", "release") and args:
             for c in parse_controls(args[0]):
-                sim.control(p.button(c, False))
+                sim.button(c, False)
         elif cmd == "k" and len(args) == 2:
             sim.control(p.knob_turn(int(args[0]) - 1, int(args[1])))
         elif cmd == "t" and args:

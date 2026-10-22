@@ -15,8 +15,10 @@
 
 #define STEP 38          /* stock firmware: both wipers must move > 38 counts */
 
-/* mux state -> knob for the PA4/PA5 pair; PA6/PA7 is the same + 4 */
-static const uint8_t mux_knob[4] = {0, 2, 1, 3};
+/* set_mux(m) drives PB8 = bit 0, PB9 = bit 1, and knob = PB8 + 2 * PB9
+   (docs/hardware/m32.md), so mux value m selects knob m on PA4/PA5 and
+   knob m + 4 on PA6/PA7. */
+static const uint8_t mux_knob[4] = {0, 1, 2, 3};
 
 static uint16_t prev[8][2];
 uint16_t knobs_raw[8][2];          /* latest wiper readings, for diagnostics */

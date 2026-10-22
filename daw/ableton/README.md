@@ -29,16 +29,18 @@ if it is still installed, can create its own "Komplete Kontrol ... DAW" ports.
 
 ## Controls
 
-Plug-in, Track and Browser switch between the device, mixer and clip views.
+Plug-in, Track and Browser switch to the device, volume and clip views.
+Mute and Solo step back and forth through the knob modes: device, volume,
+pan, sends. The keyboard handles both itself.
 
-| Control | Device view | Mixer view | Clip view |
-|---|---|---|---|
-| Knobs | 8 parameters of the selected device | volume of 8 tracks (Shift: pan) | volume of the 8 grid tracks |
-| 4D turn | select track | select track | move through scenes |
-| 4D left / right | select track | bank tracks by 8 | move cursor |
-| 4D up / down | previous / next device | select track | move cursor |
-| 4D push | device on/off | arm track | launch clip (Shift: scene) |
-| Preset ↑ / ↓ | parameter bank (Shift: device) | | page 4 scenes |
+| Control | Device | Volume / Pan | Sends | Clips |
+|---|---|---|---|---|
+| Knobs | 8 parameters of the selected device | volume / pan of 8 tracks | sends A-H of the selected track | volume of the 8 grid tracks |
+| 4D turn | select track | select track | select track | cursor up / down one scene |
+| 4D left / right | select track | select track | select track | move cursor |
+| 4D up / down | previous / next device | select track | select track | move cursor |
+| 4D push | device on/off | arm track | arm track | launch clip (Shift: scene) |
+| Preset ↑ / ↓ | parameter bank (Shift: device) | tracks 1-8 / 9-16 / ... | | page 4 scenes |
 
 | Button | Press | Shift + press |
 |---|---|---|
@@ -50,7 +52,7 @@ Plug-in, Track and Browser switch between the device, mixer and clip views.
 | Undo | undo | redo |
 | Quantize | quantize selected clip | |
 | Ideas | capture MIDI | |
-| Mute, Solo | selected track | Solo: arm |
+| Mute, Solo | previous / next knob mode | mute / solo selected track |
 
 Touching a knob starts an automation gesture, so recorded automation is one
 clean move.
@@ -93,22 +95,11 @@ for `MyKontrol`.
 | `outbox.py` | sends only changed fields, at most 20 messages / 960 bytes per 100 ms |
 | `session.py` | HI / HELLO / IDENT / PING / BYE |
 | `engine.py` | everything above wired together; what the tests drive |
-| `controller.py`, `transport.py`, `*_view.py` | what the controls do, what the display shows |
+| `controller.py`, `transport.py`, `*_view.py` (device, mixer = volume/pan, sends, clip) | what the controls do, what the display shows |
 | `surface.py` | the Live `ControlSurface` |
 
 ## Protocol notes
 
-The script implements docs/protocol.md v1 with these additions. They are
-backward compatible.
-
-- **IDENT has an optional 9th byte: the current view (0–2).** Without it the
-  host cannot know which view to send after connecting. If the byte is
-  missing, the script keeps its previous view (device view at first).
-- **HELLO is accepted at any time.** The script sends HELLO when it loads, so
-  a keyboard still in host mode from an earlier script reconnects at once
-  instead of after its 3 s timeout.
-- **The device owns the Shift, Scale, Arp, Octave and view-button lights.**
-  The script never sends LIGHT for them. For Tempo, the host sets the base
-  state (dim) and the device flashes it on each beat.
-- **Receivers ignore extra trailing data bytes**, so messages can grow later.
-- **NOTIFY title and value are at most 24 characters each**, like TEXT.
+The script follows docs/protocol.md v1. If IDENT arrives without the view
+byte (older firmware), the script keeps its previous view (device view at
+first).

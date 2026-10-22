@@ -3,7 +3,7 @@
    (the Ableton Live script in daw/ableton/) drives the views. */
 #include <stdint.h>
 
-enum host_view { VIEW_DEVICE, VIEW_MIXER, VIEW_CLIPS, VIEW_COUNT };
+enum host_view { VIEW_DEVICE, VIEW_VOLUME, VIEW_CLIPS, VIEW_PAN, VIEW_SENDS, VIEW_COUNT };
 
 enum {
     HT_TRACK = 0x00, HT_DEVICE = 0x01, HT_BANK = 0x02, HT_SUBTITLE = 0x03,

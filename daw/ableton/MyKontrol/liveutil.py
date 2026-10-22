@@ -297,6 +297,14 @@ def panning(track):
         return None
 
 
+def sends(track):
+    """The track's send parameters (A, B, ...); empty for the master."""
+    try:
+        return list(track.mixer_device.sends)
+    except Exception:
+        return []
+
+
 # -- clips ------------------------------------------------------------------
 
 def slot_state(track, slot):

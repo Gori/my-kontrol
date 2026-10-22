@@ -4,6 +4,7 @@ settings_t settings;
 
 const uint8_t settings_screensaver_min[] = {0, 2, 5, 10, 30};
 const uint8_t settings_screensaver_count = sizeof settings_screensaver_min;
+const char *const knob_target_names[KM_COUNT] = {"Off", "Instrument", "Plug-in", "Volume", "Pan", "Sends"};
 
 void settings_defaults(settings_t *s)
 {
@@ -21,6 +22,9 @@ void settings_defaults(settings_t *s)
         for (int i = 0; i < BOARD_KNOBS; i++)
             s->knob_cc[p][i] = 14 + BOARD_KNOBS * p + i;   /* page 1 = NI's CCs 14..21 */
     s->knob_mode = KNOBS_DAW;
+    for (int i = 0; i < KNOB_MODE_SLOTS; i++)
+        s->knob_modes[i] = KM_INSTRUMENT + i;
+    s->knob_target = KM_INSTRUMENT;
     s->pedal_cc[0] = 64;         /* sustain */
     s->pedal_cc[1] = 66;         /* sostenuto */
     s->strip_mod_cc = 1;
@@ -85,6 +89,14 @@ void settings_sanitize(settings_t *s)
             clamp_u8(&s->knob_cc[p][i], 0, 127, 14 + BOARD_KNOBS * p + i);
     clamp_u8(&s->knob_page, 0, KNOB_PAGES - 1, 0);
     clamp_u8(&s->knob_mode, 0, KNOB_MODE_COUNT - 1, KNOBS_DAW);
+    int any = 0;
+    for (int i = 0; i < KNOB_MODE_SLOTS; i++) {
+        clamp_u8(&s->knob_modes[i], 0, KM_COUNT - 1, KM_OFF);
+        any |= s->knob_modes[i] != KM_OFF;
+    }
+    if (!any)
+        s->knob_modes[0] = KM_INSTRUMENT;
+    clamp_u8(&s->knob_target, KM_INSTRUMENT, KM_COUNT - 1, KM_INSTRUMENT);
     clamp_u8(&s->pedal_cc[0], 0, 127, 64);
     clamp_u8(&s->pedal_cc[1], 0, 127, 66);
     clamp_u8(&s->strip_mod_cc, 0, 127, 1);

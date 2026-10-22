@@ -168,7 +168,7 @@ class ClipView(View):
 
         first, last = self.track_offset + 1, min(self.track_offset + COLS, len(tracks))
         top, bottom = self.scene_offset + 1, min(self.scene_offset + ROWS, len(scenes))
-        d.text(p.TEXT_BANK, "Session")
+        d.text(p.TEXT_BANK, "")
         d.text(p.TEXT_SUBTITLE, "Tracks %d-%d Scenes %d-%d" % (first, last, top, bottom))
 
         states = []

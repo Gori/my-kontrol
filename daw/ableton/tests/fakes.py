@@ -102,7 +102,8 @@ class FakeTrack(object):
         self.arm = False
         self.can_be_armed = armable
         self.mixer_device = _Obj(volume=FakeParam("Volume", 0.85, 0.0, 1.0, unit=" dB"),
-                                 panning=FakeParam("Pan", 0.0, -1.0, 1.0))
+                                 panning=FakeParam("Pan", 0.0, -1.0, 1.0),
+                                 sends=[])
         self.clip_slots = [FakeClipSlot() for _ in range(n_scenes)]
 
 
@@ -152,6 +153,9 @@ class FakeSong(object):
         self.return_tracks = [FakeTrack("Return %c" % chr(65 + i), armable=False)
                               for i in range(n_returns)]
         self.master_track = FakeTrack("Master", armable=False)
+        for track in self.visible_tracks + self.return_tracks:
+            track.mixer_device.sends = [FakeParam("Send %c" % chr(65 + i), 0.0, unit=" dB")
+                                        for i in range(n_returns)]
         self.view = FakeSongView(self)
         self.view.selected_track = self.visible_tracks[0] if self.visible_tracks else None
         self.view.selected_scene = self.scenes[0] if self.scenes else None

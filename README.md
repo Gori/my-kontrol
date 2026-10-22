@@ -1,8 +1,8 @@
 # My Kontrol
 
-Open-source firmware for Native Instruments Komplete Kontrol keyboards. Your
-keyboard works on its own: no Komplete Kontrol app, no Native Access, no
-drivers.
+*Open-source firmware for Native Instruments Komplete Kontrol keyboards.*
+
+## Your keyboard works on its own: no Komplete Kontrol app, no Native Access, no drivers.
 
 Plug it into any computer, phone or synth that speaks USB MIDI and play.
 Scales, chords, arpeggiator, note repeat and strum all run on the keyboard.

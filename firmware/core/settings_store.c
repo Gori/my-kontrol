@@ -16,7 +16,7 @@
 
 #define MAGIC 0x4B4D5331u        /* "1SMK" */
 #define PRESET_MAGIC 0x4B4D5031u /* "1PMK" */
-#define SETTINGS_VERSION 3       /* bump when settings_t changes: older records are ignored */
+#define SETTINGS_VERSION 4       /* bump when settings_t changes: older records are ignored */
 #define SAVE_DELAY_MS 2000
 
 typedef struct {

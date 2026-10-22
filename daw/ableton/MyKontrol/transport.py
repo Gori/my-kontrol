@@ -14,8 +14,12 @@
 #   Undo      undo                    Shift: redo
 #   Quantize  quantize selected clip
 #   Ideas     capture MIDI
-#   Mute      mute selected track
-#   Solo      solo selected track     Shift: arm selected track
+#   Mute      (device: previous knob mode)   Shift: mute selected track
+#   Solo      (device: next knob mode)       Shift: solo selected track
+#
+# Without Shift the keyboard keeps Mute/Solo for itself and sends VIEW, so
+# the script only sees them with Shift held. A press without Shift (older
+# firmware) does the same thing.
 
 from . import protocol as p
 from . import liveutil as lu
@@ -102,11 +106,7 @@ class TransportComponent(object):
 
     def _solo(self, shift):
         track = lu.selected_track(self._song)
-        if shift:
-            armed = lu.toggle_arm(track)
-            if armed is not None:
-                self._display.notify("Arm", "On" if armed else "Off")
-        elif lu.has_mute(self._song, track):
+        if lu.has_mute(self._song, track):
             lu.set_attr(track, "solo", not track.solo)
 
     # -- feedback -----------------------------------------------------------

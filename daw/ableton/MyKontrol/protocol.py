@@ -45,10 +45,13 @@ CMD_NOTIFY = 0x15
 
 # Views, as carried by VIEW
 VIEW_DEVICE = 0
-VIEW_MIXER = 1
+VIEW_VOLUME = 1
 VIEW_CLIPS = 2
-VIEWS = (VIEW_DEVICE, VIEW_MIXER, VIEW_CLIPS)
-VIEW_NAMES = {VIEW_DEVICE: "device", VIEW_MIXER: "mixer", VIEW_CLIPS: "clips"}
+VIEW_PAN = 3
+VIEW_SENDS = 4
+VIEWS = (VIEW_DEVICE, VIEW_VOLUME, VIEW_CLIPS, VIEW_PAN, VIEW_SENDS)
+VIEW_NAMES = {VIEW_DEVICE: "device", VIEW_VOLUME: "volume", VIEW_CLIPS: "clips",
+              VIEW_PAN: "pan", VIEW_SENDS: "sends"}
 
 # Boards, as carried by IDENT
 BOARD_NAMES = {1: "Komplete Kontrol M32"}
@@ -183,8 +186,8 @@ SLOT_ARMED = 7
 # ---------------------------------------------------------------------------
 
 Hi = namedtuple("Hi", "proto")
-# view: the device's current view, if it sent the optional 9th IDENT byte
-# (proposed extension, see README.md "Spec gaps"); None otherwise.
+# view: the device's current view (9th IDENT byte); None if older firmware
+# left it out.
 Ident = namedtuple("Ident", "proto board fw keys knobs caps view")
 View = namedtuple("View", "view")
 Refresh = namedtuple("Refresh", "")

@@ -13,6 +13,11 @@ enum daw_mode { DAW_AUTO, DAW_OFF, DAW_MODE_COUNT };
 enum knob_mode { KNOBS_DAW, KNOBS_MIDI, KNOB_MODE_COUNT };
 enum tempo_light { TEMPO_LIGHT_AUTO, TEMPO_LIGHT_ALWAYS, TEMPO_LIGHT_OFF, TEMPO_LIGHT_COUNT };
 
+/* What the knobs control while a DAW is connected; M / S step through
+   knob_modes[] (KM_OFF entries are skipped). */
+enum knob_target { KM_OFF, KM_INSTRUMENT, KM_PLUGIN, KM_VOLUME, KM_PAN, KM_SENDS, KM_COUNT };
+#define KNOB_MODE_SLOTS 5
+
 typedef struct {
     sp_config_t sp;
     uint8_t channel;        /* 0..15 */
@@ -30,6 +35,8 @@ typedef struct {
     uint8_t knob_cc[KNOB_PAGES][BOARD_KNOBS];
     uint8_t knob_page;
     uint8_t knob_mode;      /* knob_mode */
+    uint8_t knob_modes[KNOB_MODE_SLOTS];   /* order of the M / S cycle */
+    uint8_t knob_target;    /* current knob_target, remembered */
     uint8_t pedal_cc[2];    /* tip, ring */
     uint8_t strip_mod_cc;   /* mod strip CC */
 
@@ -45,6 +52,7 @@ typedef struct {
 extern settings_t settings;
 extern const uint8_t settings_screensaver_min[];   /* 0 = never */
 extern const uint8_t settings_screensaver_count;
+extern const char *const knob_target_names[KM_COUNT];
 
 void settings_defaults(settings_t *s);
 void settings_sanitize(settings_t *s);   /* clamp everything into range */
