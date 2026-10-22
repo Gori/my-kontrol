@@ -1,0 +1,11 @@
+[submodule "firmware/lib/tinyusb"]
+	path = firmware/lib/tinyusb
+	url = https://github.com/hathach/tinyusb
+[submodule "firmware/lib/cmsis_device_f1"]
+	path = firmware/lib/cmsis_device_f1
+	url = https://github.com/STMicroelectronics/cmsis_device_f1
+	shallow = true
+[submodule "firmware/lib/CMSIS_6"]
+	path = firmware/lib/CMSIS_6
+	url = https://github.com/ARM-software/CMSIS_6
+	shallow = true

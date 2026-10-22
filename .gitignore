@@ -1,0 +1,14 @@
+# build output
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+
+# Native Instruments material: never publish (copyrighted)
+fw/
+re/proj/
+re/*decomp*
+re/logs/
+*.zip

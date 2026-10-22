@@ -1,0 +1,9 @@
+Third-party code, fetched at these commits:
+
+git clone --depth 1 --branch 0.21.0 https://github.com/hathach/tinyusb tinyusb
+  # dae3f9a366bfcddbf9dcf1b48d7500286a849539
+git clone --depth 1 https://github.com/STMicroelectronics/cmsis_device_f1 cmsis_device_f1
+  # c8e9a4a4f16b6d2cb2a2083cbe5161025280fb22
+git clone --depth 1 --filter=blob:none --sparse https://github.com/ARM-software/CMSIS_6 CMSIS_6
+  && git -C CMSIS_6 sparse-checkout set CMSIS/Core/Include
+  # acf7392d0eee2ce58a98c8e8faa793e0f13f9307
