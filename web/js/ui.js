@@ -1,6 +1,18 @@
 // DOM helpers. All page logic lives in app.js.
 
+import { Oled } from './oled.js';
+
 export const $ = (id) => document.getElementById(id);
+
+// The big screen at the top mirrors what the keyboard shows.
+let oled = null;
+const screen = (spec) => { if (oled) oled.screen(spec); };
+export function initOled() {
+  const c = $('oled');
+  if (!c) return;
+  oled = new Oled(c);
+  document.fonts?.ready.then(() => { oled.resize(); oled.flush(); });
+}
 
 const VIEWS = ['unsupported', 'connect', 'choose', 'flash', 'done', 'error'];
 const STEP_OF_VIEW = { connect: 'connect', choose: 'choose', flash: 'flash', done: 'done' };
@@ -18,6 +30,12 @@ export function showView(name, { focus = true } = {}) {
     }
   }
   $('steps').hidden = name === 'unsupported';
+  if (oled) {
+    if (name === 'connect') oled.splash('Plug in, then Connect');
+    else if (name === 'unsupported') screen({ title: 'Needs WebUSB', big: 'Chrome' });
+    else if (name === 'done') oled.splash('Ready to play');
+    else if (name === 'error') screen({ title: 'Something went wrong', big: 'Retry' });
+  }
   if (focus) {
     const h = $(`view-${name}`).querySelector('h1');
     if (h) h.focus({ preventScroll: false });
@@ -26,7 +44,12 @@ export function showView(name, { focus = true } = {}) {
 
 export function setText(id, text) { $(id).textContent = text; }
 
-export function setOled(id, text) { $(id).textContent = text; }
+export function setOled(id, text) {
+  const lines = String(text || '').split('\n');
+  if (lines.length > 1) screen({ title: lines[0], big: lines[1] });            // as the bootloader shows it
+  else if (id === 'oled-choose') screen({ title: 'Connected', big: text || 'M32' });
+  else screen({ title: 'Restarting', big: text || '...' });
+}
 
 export function setImageStatus(text, kind = '') {
   const el = $('image-status');
@@ -45,6 +68,7 @@ export function setProgress(fraction, text, { indeterminate = false } = {}) {
     const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
     p.setAttribute('aria-valuenow', String(pct));
     $('bar').style.width = pct + '%';
+    screen({ title: pct < 100 ? 'Writing firmware' : 'Finishing', big: `${pct}%`, progress: fraction });
     // Screen readers: every 10 %, not every block.
     const step = Math.floor(pct / 10);
     if (step !== lastAnnounced) {

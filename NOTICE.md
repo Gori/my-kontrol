@@ -8,8 +8,9 @@ It includes or links the following, under their own licenses:
 | TinyUSB | `firmware/lib/tinyusb` (submodule) | MIT, (c) hathach (tinyusb.org) |
 | CMSIS 6 core headers | `firmware/lib/CMSIS_6` (submodule) | Apache-2.0, (c) Arm Limited |
 | STM32F1 device headers | `firmware/lib/cmsis_device_f1` (submodule) | Apache-2.0, (c) STMicroelectronics |
-| Spleen bitmap fonts 5x8, 8x16, 12x24 | `fonts/spleen`, compiled into `firmware/core/fonts.h` | BSD-2-Clause, (c) 2018-2026 Frederic Cambus |
+| Spleen bitmap fonts 5x8, 8x16, 12x24 | `fonts/spleen`, compiled into `firmware/core/fonts.h` and `web/js/oled-font.js` | BSD-2-Clause, (c) 2018-2026 Frederic Cambus |
 | fflate | `web/vendor/fflate.js` | MIT, (c) 2023 Arjun Barrett |
+| Departure Mono | `web/fonts` | SIL Open Font License 1.1, (c) 2022-2024 Helena Zhang |
 
 ## Spleen license (required in binary distributions)
 

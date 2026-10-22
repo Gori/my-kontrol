@@ -43,6 +43,7 @@ const OLED_DFU = 'Firmware update\nin progress';
 // ---------- start ----------
 
 async function init() {
+  ui.initOled();
   if (!usb) {
     ui.showView('unsupported');
     ui.setText('unsupported-detail', window.isSecureContext
