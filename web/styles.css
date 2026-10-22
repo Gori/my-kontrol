@@ -71,10 +71,19 @@ code { font: 0.875em var(--mono); background: var(--soft); padding: 1px 5px; bor
 
 /* the installer */
 .views {
-  border: 2px solid var(--ink);
+  --ink: #ffffff;
+  --dim: #b8b8b8;
+  --line: #333333;
+  --soft: #1f1f1f;
+  --warn: #ffb547;
+  --bad: #ff7a6e;
+  --good: #5fd982;
+  background: #111111;
+  color: var(--ink);
   border-radius: 12px;
-  padding: 28px;
+  padding: 32px;
 }
+.views .drop { border-color: #555; }
 h3 { font-size: 28px; font-weight: 400; letter-spacing: -0.01em; margin: 0 0 6px; outline: none; }
 p { margin: 0 0 12px; }
 .lede, .muted, .device-meta, .phase, .progress-text { color: var(--dim); }
