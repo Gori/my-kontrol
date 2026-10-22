@@ -171,7 +171,7 @@ Shift + Tempo stops flashing that started from a tap.
 
 ## Updating and recovery
 
-- **Update:** use the [web installer](https://gori.github.io/my-kontrol/), or System > Update Mode.
+- **Update:** use the [web installer](https://my-kontrol.vercel.app), or System > Update Mode.
 - **Recovery:** hold **Shift + Browser** while plugging in, then flash again.
 - **Crash protection:** the keyboard restarts after a crash. After three crashes in a row it waits in update mode.
 - **Settings and presets** survive updates. A version that changes the settings format resets them once.

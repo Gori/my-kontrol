@@ -12,7 +12,7 @@ Logic and Ableton Live can drive the screen and the lights.
 
 ## Install
 
-1. Open the **[web installer](https://gori.github.io/my-kontrol/)** in Chrome or Edge.
+1. Open the **[web installer](https://my-kontrol.vercel.app)** in Chrome or Edge.
 2. Plug in the keyboard and click **Install**.
 
 That's it. To go back to NI's firmware, the same page restores it from NI's official updater.
