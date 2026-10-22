@@ -191,7 +191,7 @@ static uint8_t mcu_sent[MCU_KEYS];        /* note sent on press, released on rel
 /* ---------- knob modes: what the knobs control in a DAW ---------- */
 
 static const uint8_t target_view[KM_COUNT] = {
-    VIEW_DEVICE, VIEW_DEVICE, VIEW_DEVICE, VIEW_VOLUME, VIEW_PAN, VIEW_SENDS,
+    VIEW_INSTRUMENT, VIEW_INSTRUMENT, VIEW_DEVICE, VIEW_VOLUME, VIEW_PAN, VIEW_SENDS,
 };
 static const uint8_t target_assign[KM_COUNT] = {
     0, MCU_ASSIGN_INSTR, MCU_ASSIGN_PLUGIN, MCU_ASSIGN_PAN, MCU_ASSIGN_PAN, MCU_ASSIGN_SEND,
@@ -222,10 +222,6 @@ static void knob_target_step(int d)
         int i = ((cur < 0 ? 0 : cur) + d * k + 2 * n) % n;
         uint8_t t = settings.knob_modes[i];
         if (t == KM_OFF)
-            continue;
-        /* Live has one device view for instruments and plug-ins */
-        if (app_link() == LINK_HOST && target_view[t] == target_view[settings.knob_target] &&
-            host.view != VIEW_CLIPS)
             continue;
         knob_target_set(t, 1);
         return;
@@ -261,7 +257,7 @@ static void knob_target_sync(void)
 
 /* M / S step the knob mode, Plug-in and Track jump to instrument and
    volume. Returns 1 if the button was one of them. */
-static int knob_mode_button(uint8_t ctl, int down, int link)
+static int knob_mode_button(uint8_t ctl, int down)
 {
     if (ctl != CTL_MUTE && ctl != CTL_SOLO && ctl != CTL_PLUGIN && ctl != CTL_TRACK)
         return 0;
@@ -272,7 +268,7 @@ static int knob_mode_button(uint8_t ctl, int down, int link)
     if (ctl == CTL_MUTE || ctl == CTL_SOLO)
         knob_target_step(ctl == CTL_SOLO ? 1 : -1);
     else if (ctl == CTL_PLUGIN)
-        knob_target_set(shift && link == LINK_MACKIE ? KM_PLUGIN : KM_INSTRUMENT, 1);
+        knob_target_set(shift ? KM_PLUGIN : KM_INSTRUMENT, 1);
     else
         knob_target_set(shift ? KM_SENDS : KM_VOLUME, 1);
     return 1;
@@ -613,13 +609,22 @@ static void button(uint8_t ctl, int down)
             }
             return;
         }
-        if (knob_mode_button(ctl, down, link))
+        if (knob_mode_button(ctl, down))
             return;
         host_button(ctl, down);
         return;
     case LINK_MACKIE:
-        if (knob_mode_button(ctl, down, link))
+        if (knob_mode_button(ctl, down))
             return;
+        /* Logic's own commands through the keyboard interface:
+           Quantize = Q (quantize selection), Ideas = Shift+R (capture as recording) */
+        if (settings.nav_keys && !shift && (ctl == CTL_QUANTIZE || ctl == CTL_IDEAS)) {
+            if (down) {
+                kbd_tap(ctl == CTL_IDEAS ? KMOD_SHIFT : 0, ctl == CTL_IDEAS ? KEY_R : KEY_Q);
+                ui_notify("Logic", ctl == CTL_IDEAS ? "Capture" : "Quantize");
+            }
+            return;
+        }
         mackie_button(ctl, down);
         return;
     default:

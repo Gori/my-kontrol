@@ -655,16 +655,24 @@ static void knob_cells(const char names[][HOST_TEXT_LEN / 2 + 1])
 static void render_host_device(void)
 {
     char b[26];
-    const char *title = host.device[0] ? host.device : host.track;
-    gfx_text_n(0, 0, title[0] ? title : "No Device", 16, &font_small);
-    copy(b, host.subtitle[0] ? host.subtitle : host.bank, 9);
+    int x = mode_title(host.view == VIEW_INSTRUMENT ? "Instrument" : "Plug-in");
+    /* device name, then the bank ("Operator 2/6") as space allows */
+    char *p = b;
+    const char *d = host.device[0] ? host.device : "None";
+    int room = (DISP_W - x) / 5;
+    while (*d && p - b < room) *p++ = *d++;
+    if (host.subtitle[0] && p - b + 2 < room) {
+        *p++ = ' ';
+        for (d = host.subtitle; *d && p - b < room; ) *p++ = *d++;
+    }
+    *p = 0;
     gfx_text_right(DISP_W, 0, b, &font_small);
     knob_cells(host.knob_name);
 }
 
 static void render_host_mixer(void)
 {
-    static const char *const names[VIEW_COUNT] = {"Device", "Volume", "Clips", "Pan", "Sends"};
+    static const char *const names[VIEW_COUNT] = {"Plug-in", "Volume", "Clips", "Pan", "Sends", "Instrument"};
     int x = mode_title(names[host.view]);
     char b[26];
     copy(b, host.subtitle[0] ? host.subtitle : host.track, (DISP_W - x) / 5 + 1);

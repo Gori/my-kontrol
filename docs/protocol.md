@@ -36,7 +36,7 @@ whenever the device sends `VIEW` or `REFRESH`.
 |---|---|---|
 | 0x01 | IDENT | proto=1, board, fw_major, fw_minor, fw_patch, keys, knobs, caps, view |
 | 0x02 | HI | proto=1 |
-| 0x05 | VIEW | view: 0 device, 1 volume, 2 clips, 3 pan, 4 sends |
+| 0x05 | VIEW | view: 0 plug-in (selected device), 1 volume, 2 clips, 3 pan, 4 sends, 5 instrument |
 | 0x06 | REFRESH | none; the host re-sends everything for the current view |
 
 - `board`: 1 = Komplete Kontrol M32. Future boards get the next numbers (see `docs/porting.md`).
@@ -63,11 +63,11 @@ The device keeps handling these itself:
 - Octave − and Octave +
 - Shift+Browser, which opens the device menu
 - the view buttons:
-  - Plug-in → device view
+  - Plug-in → instrument view
   - Track → volume view
   - Browser → clip view
 - Mute and Solo without Shift: previous / next knob mode, in the order the
-  user set on the keyboard (default: device, volume, pan, sends)
+  user set on the keyboard (default: instrument, plug-in, volume, pan, sends)
 
 Changing the view sends `VIEW`; these presses are not forwarded as notes.
 Shift + Mute and Shift + Solo are forwarded as the Mute and Solo notes

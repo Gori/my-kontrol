@@ -25,7 +25,7 @@ The keyboard has three modes, and it picks one by itself:
 | Arp | arpeggiator on/off | Arp & Repeat menu |
 | Octave − / + | octave down / up (±3) | −: fixed velocity on/off, +: split on/off |
 | Octave − and + together | reset octave and transpose, all notes off | |
-| Browser | menu (in Live mode: clip view) | menu |
+| Browser | menu (Live: clip launcher) | menu |
 | Tempo | tap tempo (in Live mode: Live's tap tempo) | Tempo light off |
 
 ## Standalone
@@ -45,31 +45,59 @@ The home screen shows channel, octave, transpose and split on top. Below that
 is the scale, or the last note played, with a velocity meter on the right.
 The bottom line shows what is shaping the notes: arp, repeat, chord and strum.
 
-## Mackie (Logic and others)
+## With a DAW (Logic, Live)
 
-In Logic, go to Control Surfaces > Setup, choose New > Install > Mackie
-Control, and set both ports to **My Kontrol DAW**.
+Logic and other DAWs connect through Mackie Control. In Logic, go to
+Control Surfaces > Setup, choose New > Install > Mackie Control > Scan, and
+set both ports to **My Kontrol DAW**. Ableton Live connects through the My
+Kontrol script; see [daw/ableton](../daw/ableton/README.md).
 
-| Control | Press | Shift + press |
+Both DAWs work the same way.
+
+**Knobs.** **M** and **S** step through what the knobs control. The screen title shows
+the current mode, and each knob shows its name and a position bar. Touch a knob
+to see its full name and value.
+
+| Mode | Knobs control | Preset ↑ / ↓ |
 |---|---|---|
-| Play | play | back to start |
-| Stop, Rec, Loop, Metro | stop, record, cycle, click | |
+| Instrument | the selected track's instrument (in Live, a Rack's macros come first) | parameter bank |
+| Plug-in | Logic: plug-ins of the selected track. Live: the selected device (Shift + Preset: next device) | parameter bank |
+| Volume | volume of 8 tracks | tracks 1-8, 9-16, ... |
+| Pan | pan of 8 tracks | tracks by 8 |
+| Sends | sends of the selected track | |
+
+- **Plug-in** jumps to Instrument (Shift: Plug-in).
+- **Track** jumps to Volume (Shift: Sends).
+- The keyboard remembers the mode.
+- Controls > M/S Mode 1-5 sets the order, or switches modes off.
+
+**4D encoder.** It works as a keyboard on whatever window has focus: tracks
+and regions in the arranger, notes in the piano roll, the browser.
+
+| 4D | Does |
+|---|---|
+| Turn | next / previous item (→ / ←) |
+| Shift + turn | zoom |
+| Up / down / left / right | arrow keys (Shift: extend the selection) |
+| Push | Return |
+| Shift + push | Space (play / stop) |
+
+The first time you plug it in, macOS shows the Keyboard Setup Assistant; close it.
+**System > 4D as Keys > Off** puts the 4D back on the DAW protocol.
+
+**Buttons**
+
+| Button | Press | Shift + press |
+|---|---|---|
+| Play / Stop / Rec | play / stop / record | Play: back to start; Rec in Live: session record |
+| Loop, Metro | cycle, click | |
 | Undo | undo | redo |
-| Quantize, Ideas | F1, F2 (assign in the DAW) | F5, F6 |
-| Preset ↑ / ↓ | previous / next track | bank left / right |
-| M, S | mute / solo of strip 1 | |
-| Plug-in, Track | plug-in / pan assignment | instrument / send |
-| 4D | arrows, push = Enter, turn = jog wheel | left / right = bank |
-| Knobs | V-pots 1-8 (System: Knobs in DAW = DAW) | |
+| Quantize | quantize the selection (Logic: Q; Live: the selected clip) | |
+| Ideas | Logic: capture as recording; Live: capture MIDI | |
+| M / S | knob mode − / + | mute / solo the selected track (Logic: first track of the bank) |
+| Browser | Logic: menu; Live: clip launcher | menu |
 
-The screen shows the timecode and the track names. Turning a knob shows that
-strip's name and value. The lights mirror the DAW.
-
-## Ableton Live
-
-Install the script as described in [daw/ableton](../daw/ableton/README.md).
-Plug-in, Track and Browser switch between the device, mixer and clip views.
-The full map is in that README.
+The lights follow the DAW.
 
 ## Menu
 
