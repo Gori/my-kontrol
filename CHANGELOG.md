@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0-beta.2
 
 - **Host protocol version 2** ([docs/protocol.md](docs/protocol.md)), so any DAW can build in native support:
   - The DAW sends each knob's name, group, kind and default once per page, then small value updates with its own value text.

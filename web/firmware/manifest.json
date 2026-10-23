@@ -7,8 +7,8 @@
       "usb": { "vid": "0x17cc", "app_pid": "0x1860", "dfu_pid": "0x1862" },
       "releases": [
         {
-          "version": "0.9.0-beta.1",
-          "file": "firmware/m32/my-kontrol-m32-0.9.0-beta.1.bin",
+          "version": "0.9.0-beta.2",
+          "file": "firmware/m32/my-kontrol-m32-0.9.0-beta.2.bin",
           "sha256": "PLACEHOLDER",
           "size": 0,
           "notes": "Placeholder. CI replaces this entry with the real build."

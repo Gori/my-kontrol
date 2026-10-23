@@ -8,7 +8,7 @@
    and says BYE. With --listen it stays connected (PING every 500 ms) and
    prints everything the keyboard sends until Ctrl-C. Exit status 0 = all ok.
 
-   usage: mk-probe [--port NAME] [--json] [--listen] */
+   usage: mk-probe [--port NAME] [--json] [--listen] [--sim] */
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -155,7 +155,10 @@ static int wait_cmd(uint8_t cmd, double ms, msg_t *out)
     return 0;
 }
 
-/* a virtual endpoint (the simulator) wins over a device with the same name */
+/* a virtual endpoint (the simulator) wins over a device with the same name;
+   with --sim only a virtual one will do */
+static int sim_only;
+
 static MIDIEndpointRef find(const char *name, int is_src)
 {
     MIDIEndpointRef best = 0;
@@ -173,7 +176,7 @@ static MIDIEndpointRef find(const char *name, int is_src)
         MIDIEntityRef ent = 0;
         if (MIDIEndpointGetEntity(e, &ent) != noErr || !ent)
             return e;
-        if (!best)
+        if (!best && !sim_only)
             best = e;
     }
     return best;
@@ -307,8 +310,10 @@ int main(int argc, char **argv)
             print_json = 1;
         else if (!strcmp(argv[i], "--listen"))
             listen = 1;
+        else if (!strcmp(argv[i], "--sim"))
+            sim_only = 1;
         else {
-            fprintf(stderr, "usage: mk-probe [--port NAME] [--json] [--listen]\n");
+            fprintf(stderr, "usage: mk-probe [--port NAME] [--json] [--listen] [--sim]\n");
             return 2;
         }
     }

@@ -43,7 +43,7 @@ probe: $(BUILD)/mk-probe
 
 check: $(BUILD)/mk-sim $(BUILD)/mk-probe
 	@$(BUILD)/mk-sim --no-ui --log $(BUILD)/check.log & pid=$$!; \
-	$(BUILD)/mk-probe; status=$$?; kill $$pid; wait $$pid; exit $$status
+	$(BUILD)/mk-probe --sim; status=$$?; kill $$pid; wait $$pid; exit $$status
 
 check-stdio: $(BUILD)/mk-sim
 	sh check_stdio.sh $(BUILD)/mk-sim

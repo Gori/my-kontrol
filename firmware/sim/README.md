@@ -107,7 +107,7 @@ firmware/sim/build/mk-probe --listen   # stay connected and print what the keybo
 ```
 
 It prefers a virtual port, so with both a keyboard and the sim connected it
-talks to the sim. `--port NAME` picks another port.
+talks to the sim. `--sim` accepts only the sim. `--port NAME` picks another port.
 
 ## Not simulated
 
