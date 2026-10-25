@@ -253,9 +253,17 @@ Image format:
 - **CRC:** the XS1 `crc32` step, polynomial 0xEDB88320.
 - **Header word 4:** differs per model; meaning unknown.
 
-**Recovery** (F, untested):
-- If an image fails its checks, the loader falls back to the factory image.
-- If an image passes the checks but hangs before USB starts, no way back is known except an external flash programmer.
+**Recovery:**
+- The flash holds a factory image: NI firmware 0x14.
+- **Falling back to it was tested on an S49 (T):**
+  1. Enter update mode.
+  2. Send `21 F1 0000 0000` (XMOS_DFU_REVERTFACTORY). This deletes the upgrade image.
+  3. Leave update mode. The keyboard boots the factory image (bcdDevice 0x0014), with the same interfaces and update mode as 1.2.0.
+  4. Writing 1.2.0 from there restores it; the read-back is identical.
+- **Failed checks:** if an upgrade image fails its checks, the loader boots the factory image (F).
+- **Hang:** an image that passes the checks but hangs before USB starts can't receive the revert command. Our firmware therefore needs its own way back to the factory image: a power-up button combination, and falling back after repeated failed starts.
+- **DFU_UPLOAD** reads back only the upgrade image (F, T).
+- **XMOS_DFU_SELECTIMAGE** (`F4`) does nothing (F).
 
 ## Open
 
@@ -267,5 +275,5 @@ Image format:
 - What the 2 extra light values in report 0x80 drive.
 - Aftertouch source.
 - Pedal wiring, and how sustain polarity is detected.
-- Flash layout, whether a factory image is present, and the power-up combo (byte 3 == 0xCF).
+- Flash layout offsets, and the power-up combo (byte 3 == 0xCF).
 - The other models: key ranges, the S88 keybed, and the S88 revisions.
