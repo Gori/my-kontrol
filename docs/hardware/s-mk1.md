@@ -251,7 +251,9 @@ Image format:
 - **Header:** magic 0x01A551E5, CRC, length, and 2 segments, one per tile.
 - **Segments:** each is loaded at 0x10000 and ends with a CRC.
 - **CRC:** the XS1 `crc32` step, polynomial 0xEDB88320.
-- **Header word 4:** differs per model; meaning unknown.
+- **Header word 4:** differs per model.
+  - The boot loader checks it (T). With NI's value, an image with changed segment contents boots. With 0, 0x7FFFFFFF or 0xFFFFFFFF, the loader falls back to the factory image.
+  - My Kontrol packages its images with XMOS's `xflash`.
 
 **Recovery:**
 - The flash holds a factory image: NI firmware 0x14.
