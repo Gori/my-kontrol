@@ -6,6 +6,7 @@
 #define BOARD_KNOBS  8
 #define DISP_W       128
 #define DISP_H       32
+#define BOARD_MIDI_DIN 0     /* no 5-pin MIDI jacks */
 
 /* USB identity. The NI VID/PID stays so NI's bootloader, NI's updater and
    the web installer find the keyboard in both modes. */

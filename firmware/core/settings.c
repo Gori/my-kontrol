@@ -107,5 +107,7 @@ void settings_sanitize(settings_t *s)
     clamp_u8(&s->nav_keys, 0, NAV_COUNT - 1, NAV_AUTO);
     clamp_u8(&s->daw_scale, 0, 1, DAW_YES);
     clamp_u8(&s->daw_view, 0, 1, DAW_YES);
+    clamp_u8(&s->midi_out, 0, MIDI_OUT_COUNT - 1, MIDI_OUT_BOTH);
+    clamp_u8(&s->midi_thru, 0, 1, 0);
     clamp_u8(&s->screensaver, 0, settings_screensaver_count - 1, 3);
 }

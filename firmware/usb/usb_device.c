@@ -271,8 +271,15 @@ void usb_task(void)
 {
     uint8_t pkt[4];
     tud_task();
+#if BOARD_MIDI_DIN
+    static uint8_t in[4], in_held;     /* refused for now: the EXT queue is full */
+    while (in_held || (tud_midi_available() && tud_midi_packet_read(in)))
+        if ((in_held = !midi_rx_packet(in)))
+            break;
+#else
     while (tud_midi_available() && tud_midi_packet_read(pkt))
         midi_rx_packet(pkt);
+#endif
     if (tud_midi_mounted()) {
         while (midi_tx_peek(pkt) && tud_midi_packet_write(pkt))
             midi_tx_pop();

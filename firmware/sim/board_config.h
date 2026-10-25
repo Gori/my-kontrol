@@ -1,11 +1,12 @@
 #pragma once
-/* Simulator "board": the M32's sizes, flash pages in RAM. */
+/* Simulator "board": the M32's sizes plus 5-pin MIDI, flash pages in RAM. */
 #include <stdint.h>
 
 #define BOARD_KEYS   32
 #define BOARD_KNOBS  8
 #define DISP_W       128
 #define DISP_H       32
+#define BOARD_MIDI_DIN 1     /* "My Kontrol Jacks (sim)" stands in for the 5-pin jacks */
 #define BOARD_USB_VID 0x17CC
 #define BOARD_USB_PID 0x1860
 

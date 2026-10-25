@@ -157,7 +157,16 @@ int main(int argc, char **argv)
     turn(2);
     press(CTL_NAV_PUSH);
     shot("menu_system");
-    turn(6);
+    turn(8);
+    shot("menu_system_midi");
+    press(CTL_NAV_PUSH);
+    turn(2);
+    shot("menu_system_midi_out");
+    press(CTL_NAV_PUSH);
+    press(CTL_NAV_PUSH);
+    turn(-2);
+    press(CTL_NAV_PUSH);
+    turn(3);
     press(CTL_NAV_PUSH);
     shot("confirm_reset");
     press(CTL_NAV_LEFT);

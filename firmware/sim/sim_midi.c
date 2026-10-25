@@ -1,14 +1,20 @@
-/* CoreMIDI virtual ports with the real keyboard's names. A DAW sees two
-   sources (keyboard -> DAW) and two destinations (DAW -> keyboard):
-   "My Kontrol Keys" is cable 0, "My Kontrol DAW" is cable 1.
+/* CoreMIDI virtual ports with the real keyboard's names. A DAW sees a
+   source (keyboard -> DAW) and a destination (DAW -> keyboard) for each:
+   "My Kontrol Keys" is cable 0, "My Kontrol DAW" cable 1, "My Kontrol MIDI"
+   cable 2 (the computer's side of the 5-pin jacks). "My Kontrol Jacks (sim)"
+   is the 5-pin jacks themselves: plug a synth or another keyboard in there.
 
    In: CoreMIDI calls read_proc on its own thread with a byte stream; it is
-   cut into USB-MIDI packets and queued. The main thread feeds the queue to
-   midi_rx_packet(), so the core only ever runs on one thread.
+   cut into USB-MIDI packets and queued (5-pin: queued as bytes). The main
+   thread feeds the queues to midi_rx_packet() and, at MIDI speed,
+   midi_din_rx_byte(), so the core only ever runs on one thread.
    Out: the core's USB-MIDI queue is turned back into bytes and sent with
-   MIDIReceived(), a whole sysex per MIDIPacket.
+   MIDIReceived(), a whole sysex per MIDIPacket. The 5-pin queue drains at
+   MIDI speed (sim_midi_din_tx, every millisecond) and is cut back into
+   whole messages.
    With --stdio there are no ports: sim.c injects input bytes and the output
-   is printed as "out <cable> <hex>" lines. */
+   is printed as "out <cable> <hex>" lines; 5-pin output is collected for
+   "din-out". */
 #include <pthread.h>
 #include <string.h>
 #include <CoreMIDI/CoreMIDI.h>
@@ -18,8 +24,11 @@
 FILE *sim_log;
 uint32_t sim_midi_in, sim_midi_out;
 int sim_midi_stdio;
+uint8_t sim_din_out[4096];
+int sim_din_out_n;
 
-static const char *const port_name[PORT_COUNT] = {"My Kontrol Keys", "My Kontrol DAW"};
+static const char *const port_name[PORT_COUNT] = {"My Kontrol Keys", "My Kontrol DAW", "My Kontrol MIDI", "My Kontrol Jacks (sim)"};
+static const char *const log_name[PORT_COUNT] = {"Keys", "DAW", "MIDI", "Jacks"};
 
 static MIDIClientRef client;
 static MIDIEndpointRef src[PORT_COUNT], dst[PORT_COUNT];
@@ -31,11 +40,15 @@ typedef struct {
     uint8_t in_sx, sx[3], sx_n;
 } packer_t;
 
+typedef void put_fn(uint8_t cable, uint8_t cin, uint8_t a, uint8_t b, uint8_t c);
+
 static packer_t packers[PORT_COUNT];
 
 #define RX_LEN 4096                 /* packets, power of two */
 static uint8_t rx_q[RX_LEN][4];
 static uint32_t rx_head, rx_tail;
+static uint8_t din_rx_q[RX_LEN];    /* 5-pin in: bytes as they came */
+static uint32_t din_rx_head, din_rx_tail;
 static pthread_mutex_t rx_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void rx_put(uint8_t cable, uint8_t cin, uint8_t a, uint8_t b, uint8_t c)
@@ -49,11 +62,16 @@ static void rx_put(uint8_t cable, uint8_t cin, uint8_t a, uint8_t b, uint8_t c)
     p[3] = c;
 }
 
-static void pack_byte(uint8_t cable, uint8_t b)
+static void din_rx_put(const uint8_t *b, int n)
 {
-    packer_t *p = &packers[cable];
+    for (int i = 0; i < n && din_rx_head - din_rx_tail < RX_LEN; i++)
+        din_rx_q[din_rx_head++ & (RX_LEN - 1)] = b[i];
+}
+
+static void pack_byte(packer_t *p, put_fn *put, uint8_t cable, uint8_t b)
+{
     if (b >= 0xF8) {                         /* realtime: anywhere, even inside a sysex */
-        rx_put(cable, 0xF, b, 0, 0);
+        put(cable, 0xF, b, 0, 0);
         return;
     }
     if (b == 0xF0) {
@@ -66,14 +84,14 @@ static void pack_byte(uint8_t cable, uint8_t b)
     if (p->in_sx) {
         if (b == 0xF7) {
             p->sx[p->sx_n++] = b;
-            rx_put(cable, 0x4 + p->sx_n, p->sx[0], p->sx_n > 1 ? p->sx[1] : 0, p->sx_n > 2 ? p->sx[2] : 0);
+            put(cable, 0x4 + p->sx_n, p->sx[0], p->sx_n > 1 ? p->sx[1] : 0, p->sx_n > 2 ? p->sx[2] : 0);
             p->in_sx = 0;
             return;
         }
         if (!(b & 0x80)) {
             p->sx[p->sx_n++] = b;
             if (p->sx_n == 3) {
-                rx_put(cable, 0x4, p->sx[0], p->sx[1], p->sx[2]);
+                put(cable, 0x4, p->sx[0], p->sx[1], p->sx[2]);
                 p->sx_n = 0;
             }
             return;
@@ -87,7 +105,7 @@ static void pack_byte(uint8_t cable, uint8_t b)
         p->need = hi == 0xC0 || hi == 0xD0 || b == 0xF1 || b == 0xF3 ? 1 : b < 0xF0 || b == 0xF2 ? 2 : 0;
         if (!p->need) {
             if (b == 0xF6)
-                rx_put(cable, 0x5, b, 0, 0);
+                put(cable, 0x5, b, 0, 0);
             p->status = 0;                   /* F4, F5, stray F7 */
         }
         return;
@@ -98,7 +116,7 @@ static void pack_byte(uint8_t cable, uint8_t b)
     if (p->n < p->need)
         return;
     uint8_t s = p->status;
-    rx_put(cable, s < 0xF0 ? s >> 4 : p->need == 1 ? 0x2 : 0x3, s, p->data[0], p->need > 1 ? p->data[1] : 0);
+    put(cable, s < 0xF0 ? s >> 4 : p->need == 1 ? 0x2 : 0x3, s, p->data[0], p->need > 1 ? p->data[1] : 0);
     p->n = 0;
     if (s >= 0xF0)
         p->status = 0;                       /* running status is for channel messages only */
@@ -111,8 +129,11 @@ static void read_proc(const MIDIPacketList *list, void *ref, void *src_ref)
     pthread_mutex_lock(&rx_lock);
     const MIDIPacket *pk = &list->packet[0];
     for (UInt32 i = 0; i < list->numPackets; i++) {
-        for (UInt16 k = 0; k < pk->length; k++)
-            pack_byte(cable, pk->data[k]);
+        if (cable == PORT_DIN)
+            din_rx_put(pk->data, pk->length);
+        else
+            for (UInt16 k = 0; k < pk->length; k++)
+                pack_byte(&packers[cable], rx_put, cable, pk->data[k]);
         pk = MIDIPacketNext(pk);
     }
     pthread_mutex_unlock(&rx_lock);
@@ -121,8 +142,15 @@ static void read_proc(const MIDIPacketList *list, void *ref, void *src_ref)
 void sim_midi_inject(uint8_t cable, const uint8_t *b, int n)
 {
     pthread_mutex_lock(&rx_lock);
-    for (int i = 0; i < n; i++)
-        pack_byte(cable & 1, b[i]);
+    for (int i = 0; i < n && cable <= PORT_EXT; i++)
+        pack_byte(&packers[cable], rx_put, cable, b[i]);
+    pthread_mutex_unlock(&rx_lock);
+}
+
+void sim_din_inject(const uint8_t *b, int n)
+{
+    pthread_mutex_lock(&rx_lock);
+    din_rx_put(b, n);
     pthread_mutex_unlock(&rx_lock);
 }
 
@@ -162,34 +190,36 @@ static void log_sysex(const char *dir, int port, const uint8_t *m, int n)
 {
     if (!sim_log || !n || m[0] != 0xF0)
         return;
-    fprintf(sim_log, "%8u.%03u %-3s %-4s", sim_now_ms / 1000, sim_now_ms % 1000, dir, port ? "DAW" : "Keys");
+    fprintf(sim_log, "%8u.%03u %-3s %-4s", sim_now_ms / 1000, sim_now_ms % 1000, dir, log_name[port]);
     for (int i = 0; i < n; i++)
         fprintf(sim_log, " %02X", m[i]);
     fputc('\n', sim_log);
     fflush(sim_log);
 }
 
+/* a packet the core refuses (EXT waiting for the 5-pin) stays at the head,
+   like a USB endpoint that is not read */
 void sim_midi_rx(void)
 {
     static unpacker_t logs[PORT_COUNT];
-    uint8_t batch[256][4];
     for (;;) {
-        int n = 0;
+        uint8_t p[4];
         pthread_mutex_lock(&rx_lock);
-        while (n < 256 && rx_tail != rx_head)
-            memcpy(batch[n++], rx_q[rx_tail++ & (RX_LEN - 1)], 4);
+        int have = rx_tail != rx_head;
+        if (have)
+            memcpy(p, rx_q[rx_tail & (RX_LEN - 1)], 4);
         pthread_mutex_unlock(&rx_lock);
-        if (!n)
+        if (!have || !midi_rx_packet(p))
             return;
-        for (int i = 0; i < n; i++) {
-            int port = batch[i][0] >> 4 & 1;
-            sim_midi_in++;
-            if (sim_log) {
-                int m = unpack(&logs[port], batch[i]);
-                if (m > 0)
-                    log_sysex("in", port, logs[port].buf, m);
-            }
-            midi_rx_packet(batch[i]);
+        pthread_mutex_lock(&rx_lock);
+        rx_tail++;
+        pthread_mutex_unlock(&rx_lock);
+        int port = p[0] >> 4;
+        sim_midi_in++;
+        if (sim_log) {
+            int m = unpack(&logs[port], p);
+            if (m > 0)
+                log_sysex("in", port, logs[port].buf, m);
         }
     }
 }
@@ -208,7 +238,7 @@ void sim_midi_tx(void)
     while (midi_tx_peek(p)) {
         midi_tx_pop();
         sim_midi_out++;
-        int port = p[0] >> 4 & 1;
+        int port = p[0] >> 4;
         int m = unpack(&out[port], p);
         const uint8_t *msg = m > 0 ? out[port].buf : p + 1;
         int n = m > 0 ? m : -m;
@@ -236,6 +266,63 @@ void sim_midi_tx(void)
     for (int i = 0; i < PORT_COUNT; i++)
         if (list[i]->numPackets)
             MIDIReceived(src[i], list[i]);
+}
+
+/* ---------- 5-pin out (main thread) ---------- */
+
+/* a whole message cut from the 5-pin byte stream, to "My Kontrol Jacks (sim)" */
+static void din_put(uint8_t cable, uint8_t cin, uint8_t a, uint8_t b, uint8_t c)
+{
+    static unpacker_t u;
+    uint8_t p[4] = {cable << 4 | cin, a, b, c};
+    int m = unpack(&u, p);
+    const uint8_t *msg = m > 0 ? u.buf : p + 1;
+    int n = m > 0 ? m : -m;
+    if (!n)
+        return;
+    if (m > 0)
+        log_sysex("out", PORT_DIN, msg, n);
+    Byte buf[1100];
+    MIDIPacketList *list = (MIDIPacketList *)buf;
+    MIDIPacket *cur = MIDIPacketListInit(list);
+    if (MIDIPacketListAdd(list, sizeof buf, cur, 0, n, msg))
+        MIDIReceived(src[PORT_DIN], list);
+}
+
+/* MIDI runs at 31250 baud, 10 bits a byte: 3.125 bytes per millisecond,
+   in and out */
+void sim_midi_din_tx(void)
+{
+    static packer_t packer;
+    static uint32_t budget, in_budget;
+    in_budget += 3125;
+    for (;;) {
+        uint8_t b = 0;
+        pthread_mutex_lock(&rx_lock);
+        int have = in_budget >= 1000 && din_rx_tail != din_rx_head;
+        if (have)
+            b = din_rx_q[din_rx_tail++ & (RX_LEN - 1)];
+        else if (din_rx_tail == din_rx_head && in_budget > 1000)
+            in_budget = 1000;
+        pthread_mutex_unlock(&rx_lock);
+        if (!have)
+            break;
+        in_budget -= 1000;
+        midi_din_rx_byte(b);
+    }
+    budget += 3125;
+    int b;
+    while (budget >= 1000 && (b = midi_din_tx_byte()) >= 0) {
+        budget -= 1000;
+        if (sim_midi_stdio) {
+            if (sim_din_out_n < (int)sizeof sim_din_out)
+                sim_din_out[sim_din_out_n++] = b;
+        } else {
+            pack_byte(&packer, din_put, PORT_DIN, b);
+        }
+    }
+    if (budget > 1000)
+        budget = 1000;                       /* the line was idle: no credit beyond a byte */
 }
 
 /* ---------- setup ---------- */

@@ -80,9 +80,9 @@ void board_usb_pullup(int on) { (void)on; }
 int board_diag(uint8_t *buf, int max) { (void)buf; (void)max; return 0; }
 int board_serial(char *out, int max) { (void)out; (void)max; return 0; }
 
-/* drain the MIDI out queue into a byte log per port */
-uint8_t fake_midi[2][4096];
-int fake_midi_n[2];
+/* drain the MIDI out queues into a byte log per port */
+uint8_t fake_midi[PORT_COUNT][4096];
+int fake_midi_n[PORT_COUNT];
 
 void fake_drain_midi(void)
 {
@@ -94,12 +94,18 @@ void fake_drain_midi(void)
             fake_midi[port][fake_midi_n[port]++] = p[1 + i];
         midi_tx_pop();
     }
+#if BOARD_MIDI_DIN
+    for (int b; (b = midi_din_tx_byte()) >= 0; )
+        if (fake_midi_n[PORT_DIN] < (int)sizeof fake_midi[0])
+            fake_midi[PORT_DIN][fake_midi_n[PORT_DIN]++] = b;
+#endif
 }
 
 void fake_clear_midi(void)
 {
     fake_drain_midi();
-    fake_midi_n[0] = fake_midi_n[1] = 0;
+    for (int i = 0; i < PORT_COUNT; i++)
+        fake_midi_n[i] = 0;
 }
 
 void kbd_tap(uint8_t modifier, uint8_t key) { (void)modifier; (void)key; }

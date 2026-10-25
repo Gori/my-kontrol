@@ -14,6 +14,7 @@ enum knob_mode { KNOBS_DAW, KNOBS_MIDI, KNOB_MODE_COUNT };
 enum tempo_light { TEMPO_LIGHT_AUTO, TEMPO_LIGHT_ALWAYS, TEMPO_LIGHT_OFF, TEMPO_LIGHT_COUNT };
 enum { DAW_YES, DAW_NO };            /* daw_scale, daw_view: 0 = the DAW may set it */
 enum { NAV_OFF, NAV_AUTO, NAV_ALWAYS, NAV_COUNT };   /* nav_keys */
+enum { MIDI_OUT_BOTH, MIDI_OUT_USB, MIDI_OUT_DIN, MIDI_OUT_COUNT };   /* midi_out: where the keys go */
 
 /* What the knobs control while a DAW is connected; M / S step through
    knob_modes[] (KM_OFF entries are skipped). */
@@ -44,14 +45,16 @@ typedef struct {
 
     uint8_t daw_mode;       /* daw_mode */
     uint8_t tempo_light;    /* tempo_light */
-    uint8_t clock_out;      /* send MIDI clock on the Keys port from the internal tempo */
+    uint8_t clock_out;      /* send MIDI clock to the keys route from the internal tempo */
     uint8_t contrast;       /* OLED contrast */
     uint8_t led_dim;        /* brightness of available-but-off button lights */
     uint8_t screensaver;    /* index into settings_screensaver_min */
     uint8_t nav_keys;       /* NAV_*: with a DAW, the 4D types arrow keys / Return (Auto: unless the host takes the 4D) */
     uint8_t daw_scale;      /* DAW_YES: Smart Play follows the DAW's key (SCALE) */
     uint8_t daw_view;       /* DAW_YES: the DAW may switch the knob mode (SET_MODE) */
-    uint8_t reserved[6];    /* zero; room for small additions without a version bump */
+    uint8_t midi_out;       /* MIDI_OUT_* (BOARD_MIDI_DIN) */
+    uint8_t midi_thru;      /* 5-pin in echoed to 5-pin out (BOARD_MIDI_DIN) */
+    uint8_t reserved[4];    /* zero; room for small additions without a version bump */
 } settings_t;
 
 extern settings_t settings;

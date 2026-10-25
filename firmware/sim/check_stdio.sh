@@ -1,6 +1,7 @@
 #!/bin/sh
 # End-to-end check of mk-sim --stdio --fake-time: handshake, MODES, a page
-# with one slot, a knob touch that shows the slot name. make check-stdio
+# with one slot, a knob touch that shows the slot name; then the 5-pin MIDI
+# jacks. make check-stdio
 sim=${1:-build/mk-sim}
 out=$("$sim" --stdio --fake-time <<'EOF'
 tick 1300
@@ -27,6 +28,42 @@ lights
 quit
 EOF
 )
+din=$("$sim" --stdio --fake-time <<'EOF'
+tick 1300
+# the lowest key: Keys port and 5-pin (MIDI Out: USB + MIDI)
+event 0 0 100
+tick 5
+din-out
+# 5-pin in with running status: to the computer on EXT, not back out (MIDI Thru off)
+din-in 92 28 32 29 32
+tick 5
+din-out
+# EXT from the computer goes out the 5-pin, at MIDI speed
+in 2 F0 7E 7F 06 01 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 F7
+tick 3
+din-out
+tick 10
+din-out
+# unplugged: the keys go on to the 5-pin
+usb 0
+event 0 0 0
+tick 5
+din-out
+quit
+EOF
+)
+# a 1 KB sysex each way: the computer waits for the 5-pin, nothing is cut
+sx="F0$(i=1; while [ $i -lt 1023 ]; do printf ' %02X' $((i * 7 % 128)); i=$((i + 1)); done) F7"
+long=$("$sim" --stdio --fake-time <<EOF
+tick 1300
+in 2 $sx
+tick 400
+din-out
+din-in $sx
+tick 400
+quit
+EOF
+)
 fail=0
 check() {       # check <description> <command...>
     d=$1; shift
@@ -49,4 +86,19 @@ check "lights for 26 controls"    count lights '^[0-9]+ [0-9]+$' 26
 check "Plug-in light on"          has '^17 255$'
 check "no errors"                 eval '! has "^error"'
 [ $fail = 0 ] || { echo "--- transcript"; printf '%s\n' "$out"; }
+
+dfail=$fail
+dn() { printf '%s\n' "$din" | grep '^din-out' | sed -n "$1p"; }
+dhas() { printf '%s\n' "$din" | grep -Eq "$1"; }
+check "5-pin: key on Keys"        dhas '^out 0 90 29 64$'
+check "5-pin: key on 5-pin out"   eval '[ "$(dn 1)" = "din-out 90 29 64" ]'
+check "5-pin in to EXT"           eval 'dhas "^out 2 92 28 32$" && dhas "^out 2 92 29 32$"'
+check "5-pin in not echoed"       eval '[ "$(dn 2)" = "din-out" ]'
+check "EXT sysex paced"           eval '[ "$(dn 3)" = "din-out F0 7E 7F 06 01 00 01 02 03 04" ]'
+check "EXT sysex completes"       eval '[ "$(dn 4)" = "din-out 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 F7" ]'
+check "unplugged: 5-pin only"     eval '[ "$(dn 5)" = "din-out 80 29 00" ] && ! dhas "^out 0 80"'
+check "5-pin: no errors"          eval '! dhas "^error"'
+check "1 KB sysex to the 5-pin"   eval 'printf "%s\n" "$long" | grep -qx "din-out $sx"'
+check "1 KB sysex from the 5-pin" eval 'printf "%s\n" "$long" | grep -qx "out 2 $sx"'
+[ $fail = $dfail ] || { echo "--- 5-pin transcript"; printf '%s\n' "$din" "$long" | cut -c1-200; }
 exit $fail

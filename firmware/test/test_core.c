@@ -42,6 +42,8 @@ void app_midi_realtime(uint8_t port, uint8_t b)
     rx_rt[rx_rt_n++] = b;
 }
 
+void app_midi_sysex_byte(uint8_t port, uint8_t b) { (void)port; (void)b; }
+
 static void rx_reset(void)
 {
     rx_n = rx_sx_n = rx_sx_count = rx_rt_n = 0;

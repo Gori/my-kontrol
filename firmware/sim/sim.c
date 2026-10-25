@@ -30,7 +30,9 @@ static const char usage[] =
     "usage: mk-sim [--log FILE] [--no-ui | --stdio [--fake-time]]\n"
     "\n"
     "Runs the My Kontrol M32 firmware core with CoreMIDI virtual ports\n"
-    "\"My Kontrol Keys\" and \"My Kontrol DAW\" (a source and a destination each).\n"
+    "\"My Kontrol Keys\", \"My Kontrol DAW\" and \"My Kontrol MIDI\" (a source and a\n"
+    "destination each), and \"My Kontrol Jacks (sim)\" standing in for 5-pin MIDI In\n"
+    "and Out.\n"
     "\n"
     "  --log FILE   write every sysex in and out as hex to FILE\n"
     "  --no-ui      headless: no terminal UI, prints only errors; stop with Ctrl-C\n"
@@ -406,6 +408,7 @@ static void step(void)
     controls_tick();
     app_poll();
     sim_midi_tx();
+    sim_midi_din_tx();
     render(0);
 }
 
@@ -468,30 +471,61 @@ static void find_text(const char *s)
         printf("notfound\n");
 }
 
+/* the rest of the line as hex bytes, "90 3C 64" or "903C64"; -1 if malformed */
+static int hex_bytes(uint8_t *b, int max)
+{
+    char *t;
+    int n = 0;
+    while ((t = strtok(0, " \t\r\n")))
+        for (; *t; t += 2) {
+            char h[3] = {t[0], t[1], 0}, *end;
+            long v = strtol(h, &end, 16);
+            if (!t[1] || *end || n >= max)
+                return -1;
+            b[n++] = (uint8_t)v;
+        }
+    return n;
+}
+
 static void command(char *line)
 {
     char *cmd = strtok(line, " \t\r\n");
     if (!cmd || cmd[0] == '#')
         return;
     if (!strcmp(cmd, "in")) {
-        char *c = strtok(0, " \t\r\n"), *t;
+        char *c = strtok(0, " \t\r\n");
         uint8_t b[1024];
-        int n = 0, bad = !c || (strcmp(c, "0") && strcmp(c, "1"));
-        while (!bad && (t = strtok(0, " \t\r\n")))
-            for (; *t && !bad; t += 2) {
-                char h[3] = {t[0], t[1], 0}, *end;
-                long v = strtol(h, &end, 16);
-                bad = !t[1] || *end || n >= (int)sizeof b;
-                if (!bad)
-                    b[n++] = (uint8_t)v;
-            }
-        if (bad || !n) {
-            printf("error usage: in <0|1> <hex bytes>\n");
+        int n = c && c[0] >= '0' && c[0] <= '2' && !c[1] ? hex_bytes(b, sizeof b) : -1;
+        if (n <= 0) {
+            printf("error usage: in <0|1|2> <hex bytes>\n");
             return;
         }
         sim_midi_inject(c[0] - '0', b, n);
         sim_midi_rx();
         sim_midi_tx();
+    } else if (!strcmp(cmd, "din-in")) {
+        uint8_t b[1024];
+        int n = hex_bytes(b, sizeof b);
+        if (n <= 0) {
+            printf("error usage: din-in <hex bytes>\n");
+            return;
+        }
+        sim_din_inject(b, n);
+        sim_midi_rx();
+        sim_midi_tx();
+    } else if (!strcmp(cmd, "din-out")) {
+        printf("din-out");
+        for (int i = 0; i < sim_din_out_n; i++)
+            printf(" %02X", sim_din_out[i]);
+        printf("\n");
+        sim_din_out_n = 0;
+    } else if (!strcmp(cmd, "usb")) {
+        char *a = strtok(0, " \t\r\n");
+        if (!a || (strcmp(a, "0") && strcmp(a, "1"))) {
+            printf("error usage: usb <0|1>\n");
+            return;
+        }
+        app_usb_mounted(a[0] == '1');
     } else if (!strcmp(cmd, "tick")) {
         char *a = strtok(0, " \t\r\n");
         long n = a ? strtol(a, 0, 10) : -1;

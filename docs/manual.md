@@ -16,6 +16,22 @@ The keyboard has three modes, and it picks one by itself:
 |---|---|
 | **My Kontrol Keys** | keys, Smart Play output, knob CCs, strips, pedals; MIDI clock in and out |
 | **My Kontrol DAW** | control only: Mackie Control or the My Kontrol protocol. Never record from it. |
+| **My Kontrol MIDI** | keyboards with 5-pin MIDI jacks: what arrives at MIDI In, and what the computer sends out MIDI Out |
+
+## MIDI Out
+
+Keyboards with 5-pin MIDI jacks (not the M32) play synths and other gear
+without a computer. Everything you play goes out the MIDI Out jack: keys,
+Smart Play and the arpeggiator, knobs, strips, pedals, and MIDI clock when
+Clock Out is on.
+
+- **System > MIDI Out** picks where your playing goes: USB + MIDI, USB only, or MIDI only.
+- **System > MIDI Thru > On** sends whatever arrives at MIDI In back out MIDI Out, mixed with your playing.
+- With a computer connected, MIDI In also reaches it on the My Kontrol MIDI port.
+- MIDI clock at MIDI In can drive the arpeggiator (Clock > External). The keyboard follows one clock at a time: whichever was there first, USB or MIDI In.
+- Notes at MIDI In are passed on, not played through Smart Play.
+- Sysex of any length passes, both ways. Nothing else goes out in the middle of one: your playing waits for its end.
+- With Clock Out on and Clock on Internal, MIDI Thru keeps the incoming clock back, so only one clock goes out.
 
 ## Buttons in every mode
 
@@ -35,7 +51,7 @@ The keyboard has three modes, and it picks one by itself:
 | Quantize | note repeat: tap toggles, hold = only while held |
 | Ideas | chord memory: hold Ideas and play a chord to teach it; tap toggles it |
 | Preset ↑ / ↓ | knob page 1-4 |
-| Play / Stop | MIDI Start / Stop on the Keys port (when Clock Out is on) |
+| Play / Stop | MIDI Start / Stop with the keys (when Clock Out is on) |
 | 4D push | menu |
 | 4D turn, up / down | home page: play info / knob values |
 | 4D left / right | transpose −/+ |
@@ -160,7 +176,7 @@ Open the menu with 4D push, or with Browser (Shift + Browser in host mode).
 | Note Repeat, Repeat Vel | velocity from the key or from the mod strip |
 | Tempo | 40-240 BPM |
 | Clock | internal or external MIDI clock |
-| Clock Out | sends MIDI clock on the Keys port |
+| Clock Out | sends MIDI clock with the keys: the Keys port, and MIDI Out on keyboards that have one |
 
 **Keys**
 
@@ -187,6 +203,8 @@ Open the menu with 4D push, or with Browser (Shift + Browser in host mode).
 | DAW Scale | follow: Smart Play uses the DAW's key; ignore |
 | DAW Sets View | yes: the DAW may switch the knob mode; no |
 | 4D as Keys | auto: arrow keys, unless the DAW takes the 4D; always; off |
+| MIDI Out | keyboards with 5-pin MIDI: where your playing goes: USB + MIDI, USB, MIDI |
+| MIDI Thru | off; on: MIDI In goes back out MIDI Out |
 | Tempo Light | auto, always, off |
 | Light Level | brightness of unlit buttons |
 | Contrast, Screen Saver | |

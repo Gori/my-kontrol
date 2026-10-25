@@ -7,6 +7,11 @@ the button lights in a terminal. Use it to build and test a host for the
 protocol ([protocol.md](../../docs/protocol.md)) without the hardware. Mackie Control
 works on the same port too.
 
+Unlike a real M32, the sim has 5-pin MIDI jacks (`BOARD_MIDI_DIN 1`), so the
+standalone MIDI Out path can be tried: **My Kontrol Jacks (sim)** stands in
+for the jacks, and **My Kontrol MIDI** is the computer's port for them, as on
+a keyboard that has them.
+
 ## Build
 
 ```sh
@@ -50,13 +55,16 @@ as "typed:" and not sent anywhere.
 `mk-sim --stdio` opens no MIDI ports and draws no UI. It reads commands from
 stdin, one per line, and prints every complete message the keyboard sends as
 `out <cable> <hex bytes>`, flushed per line and in order with the command
-replies. Cable 0 is Keys, 1 is DAW. With `--fake-time` time stands still
+replies. Cable 0 is Keys, 1 is DAW, 2 is MIDI (the computer's port for the 5-pin jacks). With `--fake-time` time stands still
 except on `tick`, so a run is deterministic; without it time runs in real
 time.
 
 | Command | |
 |---|---|
 | `in <cable> <hex bytes>` | a MIDI message arriving, for example `in 1 F0 7D 4D 4B 03 F7`; the keyboard handles it at once |
+| `din-in <hex bytes>` | bytes arriving at the 5-pin MIDI In, running status allowed |
+| `din-out` | `din-out <hex bytes>`: what went out the 5-pin MIDI Out since the last `din-out`. It sends at MIDI speed, about 3 bytes per ms, so tick first |
+| `usb <0\|1>` | USB unplugged or plugged in: unplugged, the keys go only to the 5-pin |
 | `tick <ms>` | run the keyboard for that long (`--fake-time` only) |
 | `event <type> <id> <value>` | a control, as `app_event()`; types from `core/hal.h`: 0 key, 1 button, 2 encoder, 3 knob, 4 knob touch, 5 strip, 6 pedal |
 | `screen` | `screen`, 32 lines of 128 `#` / `.`, then `end` |
@@ -87,6 +95,10 @@ Start `mk-sim` before the DAW, or rescan MIDI ports in the DAW.
   Live): input and output **My Kontrol DAW**.
 - Notes: **My Kontrol Keys** as a MIDI input (and output, if the DAW echoes
   knob CCs back).
+- 5-pin MIDI: **My Kontrol MIDI** is what the computer sees of the jacks.
+  To hear what the keyboard plays standalone, point a synth at **My Kontrol
+  Jacks (sim)** (MIDI Out); what a synth sends to it arrives at MIDI In.
+  Both directions run at MIDI speed, about 3 bytes per ms.
 
 The ports have fixed unique IDs, so a DAW finds them again on the next run.
 

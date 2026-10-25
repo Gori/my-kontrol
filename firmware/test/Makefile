@@ -8,10 +8,12 @@ CFLAGS = -g -std=gnu11 -Wall -Wextra -Wno-missing-field-initializers -fsanitize=
 BIN = build
 CORE = ../core
 
-all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host
+all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0
 	$(BIN)/test_smartplay
 	$(BIN)/test_core
 	$(BIN)/test_host
+	$(BIN)/test_midi_din
+	$(BIN)/test_midi_din0
 
 $(BIN):
 	mkdir -p $@
@@ -26,7 +28,16 @@ $(BIN)/test_core: test_core.c host/fake_hal.c $(CORE)/midi.c $(CORE)/play.c $(CO
 $(BIN)/test_host: test_host.c host/fake_hal.c $(CORE)/host.c $(CORE)/mcu.c $(CORE)/midi.c | $(BIN)
 	$(CC) $(CFLAGS) $^ -o $@
 
-PREVIEW_SRCS = ui_preview.c host/fake_hal.c $(filter-out $(CORE)/main.c,$(wildcard $(CORE)/*.c))
+APP_SRCS = host/fake_hal.c $(filter-out $(CORE)/main.c,$(wildcard $(CORE)/*.c))
+
+# the whole core, with 5-pin MIDI and without (the M32)
+$(BIN)/test_midi_din: test_midi_din.c $(APP_SRCS) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BIN)/test_midi_din0: test_midi_din.c $(APP_SRCS) | $(BIN)
+	$(CC) $(CFLAGS) -DBOARD_MIDI_DIN=0 $^ -o $@
+
+PREVIEW_SRCS = ui_preview.c $(APP_SRCS)
 
 $(BIN)/ui_preview: $(PREVIEW_SRCS) | $(BIN)
 	$(CC) $(CFLAGS) $^ -o $@

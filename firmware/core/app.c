@@ -49,9 +49,25 @@ uint8_t app_knob_value(int page, int knob) { return knob_val[page & (KNOB_PAGES 
 
 static void daw_scale(void);
 
+/* Where the keys go: USB while it is up, and the 5-pin per System > MIDI
+   Out. Changing MIDI Out ends the notes where they started. */
+static void keys_route(void)
+{
+#if BOARD_MIDI_DIN
+    static uint8_t out = 0xFF;
+    if (out != 0xFF && out != settings.midi_out)
+        play_panic();
+    out = settings.midi_out;
+    midi_keys_route((usb_up && out != MIDI_OUT_DIN ? MIDI_TO_USB : 0) | (out != MIDI_OUT_USB ? MIDI_TO_DIN : 0));
+#else
+    midi_keys_route(usb_up ? MIDI_TO_USB : 0);
+#endif
+}
+
 void app_settings_changed(void)
 {
     settings_sanitize(&settings);
+    keys_route();
     daw_scale();
     play_settings_changed();
     board_display_contrast(settings.contrast);
@@ -80,6 +96,7 @@ void app_enter_bootloader(void)
 void app_usb_mounted(int mounted)
 {
     usb_up = mounted;
+    keys_route();
     if (!mounted) {
         mcu_reset();
         host_usb_reset();
@@ -88,8 +105,51 @@ void app_usb_mounted(int mounted)
 
 /* ---------- MIDI in ---------- */
 
+#if BOARD_MIDI_DIN
+/* With Clock Out on the internal tempo, our clock goes out the 5-pin and
+   MIDI Thru keeps the incoming one back (two clocks would fight). */
+static int own_clock(uint8_t b)
+{
+    return settings.clock_out && !settings.sp.ext_clock && (b == 0xF8 || (b >= 0xFA && b <= 0xFC));
+}
+
+/* 5-pin in goes to the computer on EXT, and with MIDI Thru back out the
+   5-pin, merged with the keys; EXT from the computer goes out the 5-pin. */
+static void din_forward(uint8_t port, const uint8_t *m, uint16_t n)
+{
+    if (port == PORT_EXT) {
+        midi_send(PORT_DIN, m, n);
+        return;
+    }
+    if (usb_up)
+        midi_send(PORT_EXT, m, n);
+    if (settings.midi_thru && !own_clock(m[0]))
+        midi_send(PORT_DIN, m, n);
+}
+
+/* sysex the same way, a byte at a time, so any length passes */
+void app_midi_sysex_byte(uint8_t port, uint8_t b)
+{
+    if (port == PORT_EXT) {
+        midi_din_sysex(PORT_EXT, b);
+        return;
+    }
+    if (usb_up)
+        midi_usb_sysex(PORT_EXT, b);
+    if (settings.midi_thru)
+        midi_din_sysex(PORT_DIN, b);
+}
+#endif
+
 void app_midi_message(uint8_t port, uint8_t st, uint8_t d0, uint8_t d1)
 {
+#if BOARD_MIDI_DIN
+    if (port == PORT_EXT || port == PORT_DIN) {
+        uint8_t m[3] = {st, d0, d1};
+        din_forward(port, m, midi_msg_len(st));
+        return;                             /* notes from the 5-pin are not played */
+    }
+#endif
     if (port == PORT_DAW) {
         if ((st & 0x0F) == 0x0F && host.connected)
             return;                         /* channel 16 is the host protocol's own */
@@ -118,7 +178,13 @@ void app_midi_sysex(uint8_t port, const uint8_t *m, uint16_t n)
 
 void app_midi_realtime(uint8_t port, uint8_t b)
 {
-    /* follow one source: a DAW may send clock to both ports */
+#if BOARD_MIDI_DIN
+    if (port == PORT_EXT || port == PORT_DIN)
+        din_forward(port, &b, 1);
+    if (port == PORT_EXT)
+        return;                             /* the computer's clock for the 5-pin, not ours */
+#endif
+    /* follow one source: a DAW may send clock to both ports, a 5-pin clock too */
     if (clock_port != port && now_ms - clock_seen_ms < 1000)
         return;
     if (b == 0xF8) {
@@ -152,7 +218,7 @@ static void knob_turned(uint8_t k, int d)
     if (x == *v)
         return;
     *v = x;
-    midi_send3(PORT_KEYS, 0xB0 | play_channel(), settings.knob_cc[settings.knob_page][k], x);
+    midi_keys3(0xB0 | play_channel(), settings.knob_cc[settings.knob_page][k], x);
     ui_focus_knob(k);
 }
 
@@ -526,7 +592,7 @@ static void local_button(uint8_t ctl, int down)
         /* with Clock Out on, Play / Stop start and stop whatever follows us */
         if (down && settings.clock_out && !settings.sp.ext_clock) {
             uint8_t b = ctl == CTL_PLAY ? 0xFA : 0xFC;
-            midi_send(PORT_KEYS, &b, 1);
+            midi_keys(&b, 1);
             ui_notify("MIDI Clock", ctl == CTL_PLAY ? "Start" : "Stop");
         }
         return;
@@ -947,6 +1013,7 @@ static void host_requests(void)
 void app_init(void)
 {
     settings_load();
+    keys_route();
     board_display_contrast(settings.contrast);
     play_init();
     mcu_init(daw_send);
@@ -976,12 +1043,15 @@ void app_poll(void)
     last_ms = now_ms;
 
     int ticks = sp_tick_us(dt * 1000);
-    if (settings.clock_out && usb_up)
+    if (settings.clock_out)
         for (int i = 0; i < ticks; i++) {
             uint8_t b = 0xF8;
-            midi_send(PORT_KEYS, &b, 1);
+            midi_keys(&b, 1);
         }
     play_tick_ms(dt);
+#if BOARD_MIDI_DIN
+    midi_din_tick_ms(dt);
+#endif
     ui_tick_ms(dt);
     host_tick_ms(dt);
     settings_tick_ms(dt, !play_keys_down() && !sp_engine_playing());

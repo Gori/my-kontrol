@@ -26,9 +26,9 @@ static uint8_t pedal_down[2];
 
 static void send_both(uint8_t status, uint8_t a, uint8_t b)
 {
-    midi_send3(PORT_KEYS, status | zone_ch[ZONE_UPPER], a, b);
+    midi_keys3(status | zone_ch[ZONE_UPPER], a, b);
     if (lower_active && zone_ch[ZONE_LOWER] != zone_ch[ZONE_UPPER])
-        midi_send3(PORT_KEYS, status | zone_ch[ZONE_LOWER], a, b);
+        midi_keys3(status | zone_ch[ZONE_LOWER], a, b);
 }
 
 static void voice(int zone, uint8_t note, uint8_t vel, int on)
@@ -36,15 +36,15 @@ static void voice(int zone, uint8_t note, uint8_t vel, int on)
     uint8_t *v = &voices[zone][note & 0x7F], ch = zone_ch[zone];
     if (on) {
         if (*v)
-            midi_send3(PORT_KEYS, 0x80 | ch, note, 0);   /* retrigger */
+            midi_keys3(0x80 | ch, note, 0);   /* retrigger */
         if (*v < 255)
             (*v)++;
-        midi_send3(PORT_KEYS, 0x90 | ch, note, vel);
+        midi_keys3(0x90 | ch, note, vel);
         play_last_note = note;
         play_last_velocity = vel;
         play_note_gen++;
     } else if (*v && !--*v) {
-        midi_send3(PORT_KEYS, 0x80 | ch, note, 0);
+        midi_keys3(0x80 | ch, note, 0);
     }
 }
 
@@ -190,10 +190,10 @@ static void leave_channel(int zone)
     zone_all_off(zone);
     if (zone == ZONE_UPPER || lower_active) {
         if (strip_out[0] != 8192)
-            midi_send3(PORT_KEYS, 0xE0 | ch, 0x00, 0x40);
+            midi_keys3(0xE0 | ch, 0x00, 0x40);
         for (int s = 0; s < 2; s++)
             if (pedal_down[s])
-                midi_send3(PORT_KEYS, 0xB0 | ch, settings.pedal_cc[s], 0);
+                midi_keys3(0xB0 | ch, settings.pedal_cc[s], 0);
     }
 }
 

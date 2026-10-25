@@ -94,6 +94,9 @@ static const char *const repeat_vels[] = {"Key", "Mod Strip"};
 static const char *const follow_ignore[] = {"Follow", "Ignore"};
 static const char *const yes_no[] = {"Yes", "No"};
 static const char *const nav_modes[] = {"Off", "Auto", "Always"};
+#if BOARD_MIDI_DIN
+static const char *const midi_outs[] = {"USB + MIDI", "USB", "MIDI"};
+#endif
 
 static void fmt_scale(int v, char *b) { put_str(b, sp_scales[v].name); }
 static void fmt_bpm(int v, char *b) { put_bpm(b, v); }
@@ -195,6 +198,10 @@ static const item_t system_items[] = {
     {"Contrast",     K_INT,  T_U8, &S->contrast, 0, 255, 16},
     {"Screen Saver", K_INT,  T_U8, &S->screensaver, 0, 4, 1, 0, fmt_saver},
     {"4D as Keys",   K_ENUM, T_U8, &S->nav_keys, 0, NAV_COUNT - 1, 1, nav_modes},
+#if BOARD_MIDI_DIN
+    {"MIDI Out",     K_ENUM, T_U8, &S->midi_out, 0, MIDI_OUT_COUNT - 1, 1, midi_outs},
+    {"MIDI Thru",    K_ENUM, T_U8, &S->midi_thru, 0, 1, 1, off_on},
+#endif
     {"Update Mode",  K_CONFIRM, .action = act_update, .confirm = "Enter update mode?"},
     {"Reset All",    K_CONFIRM, .action = act_reset, .confirm = "Reset all settings?"},
     {"About",        K_ACTION, .action = act_about},

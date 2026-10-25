@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **5-pin MIDI** on keyboards that have the jacks: play standalone into MIDI Out, with System > MIDI Out and MIDI Thru, and a My Kontrol MIDI port that connects the computer to the jacks.
+
 ## 0.9.0-beta.2
 
 - **Host protocol version 2** ([docs/protocol.md](docs/protocol.md)), so any DAW can build in native support:

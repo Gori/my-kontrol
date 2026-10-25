@@ -13,6 +13,7 @@ static const char *current;
 void app_midi_message(uint8_t port, uint8_t st, uint8_t a, uint8_t b) { (void)port; (void)st; (void)a; (void)b; }
 void app_midi_sysex(uint8_t port, const uint8_t *m, uint16_t n) { (void)port; (void)m; (void)n; }
 void app_midi_realtime(uint8_t port, uint8_t b) { (void)port; (void)b; }
+void app_midi_sysex_byte(uint8_t port, uint8_t b) { (void)port; (void)b; }
 
 /* everything the keyboard sends, as whole messages */
 static uint8_t out[64][128];
