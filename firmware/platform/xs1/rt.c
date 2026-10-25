@@ -1,6 +1,6 @@
 /* Compiler support for clang --target=xcore: the library functions LLVM's XCore backend calls
-   (memcpy, __memcpy_4, memmove, memset, misaligned word access, 64-bit shifts and division).
-   Written from scratch.
+   (memcpy, __memcpy_4, memmove, memset, misaligned word access, 64-bit shifts and division),
+   and memcmp and strlen for the firmware. Written from scratch.
    Build with -ffreestanding -fno-builtin so these loops do not turn back into calls to
    themselves. 64-bit shifts by a variable amount would call the helpers below, so the
    helpers only shift by constants. */
@@ -47,6 +47,23 @@ void *memmove(void *dst, const void *src, size_t n)
         while (n--)
             d[n] = s[n];
     return dst;
+}
+
+int memcmp(const void *a, const void *b, size_t n)
+{
+    const uint8_t *p = a, *q = b;
+    for (; n; n--, p++, q++)
+        if (*p != *q)
+            return *p - *q;
+    return 0;
+}
+
+size_t strlen(const char *s)
+{
+    const char *p = s;
+    while (*p)
+        p++;
+    return p - s;
 }
 
 void *memset(void *dst, int c, size_t n)

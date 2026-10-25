@@ -12,6 +12,8 @@ image      build the test program for both tiles, make an upgrade image, validat
 sim        run the test program and the core smartplay/host tests in xsim
 s49        the S49 bring-up harness (s49run.py) on test/s49_tile0.c + s49_tile1.c, and on
            tile 0 alone with the HostLink stub: LCD text, DIN out, DIN/USB MIDI in echoed
+fw         our S49 firmware (make BOARD=s49 DEV=1) on the harness with both tiles: displays,
+           a knob's CC on DIN OUT, the menu
 emu        (not in the default set, ~1 min) run NI's S49 image on the s49emu board model: LCD
            init sequence, standalone display text, a key press giving a note on DIN MIDI OUT
 """
@@ -209,7 +211,8 @@ def runtime():
 def test_core():
     """firmware/core/*.c + platform/xs1 into one tile image (board/hal stubbed)."""
     core = core_sources()
-    rt = runtime() + [cc(os.path.join(XS1, 'platform.c'))]
+    inc = [os.path.join(FW, d) for d in ('core', 'usb', 'boards/m32')]
+    rt = runtime() + [cc(os.path.join(XS1, 'platform.c'), '', inc)]
     r, out = link('core', rt + core, stub=True)
     n = check_link(r, core + rt[1:])
     a = {k: e - s for k, s, e in r.areas()}
@@ -331,6 +334,42 @@ def test_s49():
     return ok
 
 
+def test_fw():
+    """Our S49 firmware (make BOARD=s49 DEV=1) on the harness with both of its tiles: splash,
+    home screen, the CC page, a knob's CC on the 5-pin MIDI OUT, the menu."""
+    import s49run
+    r = subprocess.run(['make', '-C', FW, 'BOARD=s49', 'DEV=1', '-j8'], capture_output=True, text=True)
+    if r.returncode:
+        print('fw: FAILED to build\n' + r.stdout[-2000:] + r.stderr[-2000:])
+        return False
+    b = os.path.join(FW, 'build', 's49-dev')
+    h = s49run.Harness(open(os.path.join(b, 'tile0.bin'), 'rb').read(), open(os.path.join(b, 'tile1.bin'), 'rb').read(),
+                       os.path.join(b, 'tile0.map'), os.path.join(b, 'tile1.map'))
+    shot = lambda: [x.split('|')[1:3] for x in h.command('screen')[1:-1]]
+    steps = [('tick 100', None), ('screen', lambda d: d[0] == ['MY      ', 'KONTROL ']),
+             ('tick 1300', None), ('screen', lambda d: d[0][0] == 'CH1     ' and d[1][1] == 'KONTROL '),
+             ('event 2 0 1', None), ('tick 30', None),
+             ('screen', lambda d: d[0] == ['KNOBS   ', 'PAGE 1  '] and d[1] == ['CC14    ', '       0']),
+             ('event 3 0 40', None), ('tick 30', None),
+             ('event 1 25 1', None), ('tick 20', None), ('event 1 25 0', None), ('tick 2000', None),
+             ('screen', lambda d: d[0][0] == 'MENU    ' and d[1][0].startswith('>'))]
+    ok, din = True, []
+    for cmd, check in steps:
+        if check is None:
+            din += [x for x in h.command(cmd) if x.startswith('din-out')]
+        else:
+            d = shot()
+            if not check(d):
+                ok = False
+                print('fw: after %r the displays were %s' % (cmd, d))
+    ok &= din == ['din-out B0 0E 28']
+    print('fw: S49 firmware (tile 0 %d B, tile 1 %d B) in the harness: splash, home, CC page, '
+          'menu %s; knob 1 -> %s' % (os.path.getsize(os.path.join(b, 'tile0.bin')),
+                                    os.path.getsize(os.path.join(b, 'tile1.bin')),
+                                    'ok' if ok else 'DIFFERENT', din))
+    return ok
+
+
 def test_emu():
     if not os.path.exists(NI):
         print('emu: skipped (%s not present)' % os.path.relpath(NI, ROOT))
@@ -354,8 +393,8 @@ def test_emu():
 
 
 TESTS = {'roundtrip': test_roundtrip, 'core': test_core, 'image': test_image, 'sim': test_sim,
-         's49': test_s49, 'emu': test_emu}
-DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49']
+         's49': test_s49, 'fw': test_fw, 'emu': test_emu}
+DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw']
 
 
 if __name__ == '__main__':

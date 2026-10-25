@@ -29,6 +29,9 @@ Commands (--stdio, one per line; blank lines and # comments are skipped):
   din-in HEX            bytes into the 5-pin MIDI IN
   in CABLE HEX          a MIDI message from the USB host (HostLink stub only)
   usb 0|1               USB host connected (HostLink stub only)
+  event TYPE ID VALUE   an event for the core, as core/hal.h's mk_event_t (0 key, 1 button,
+                        2 encoder, 3 knob, 4 knob touch, 5 strip, 6 pedal); DEV=1 builds only
+                        (the link's DEV_EVENT, like tools/mktest.py over USB)
   screen                `screen`, 9 lines `<display> <bar> |<line 1>|<line 2>|`, `end`
   leds                  `leds`, then `guide <key> <r> <g> <b>` and `led <bit> <level>` for every
                         lit light (levels 0..127, averaged over the last tick), `end`
@@ -42,7 +45,7 @@ character: '#' both, '+' one, ' ' none.
 Light guide: key k is chain A (keys 0..23) or B (24..48), 3 bits per key; the bit order inside
 each 24-bit group is the one NI's firmware uses (xmos.md §8.3).
 """
-import argparse, os, sys
+import argparse, os, struct, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -53,6 +56,28 @@ GROUP = [6, 7, 5, 3, 4, 2, 0, 1, 15, 13, 14, 12, 10, 11, 9, 23, 8, 22, 20, 21, 1
 RAMP = ' .:-=+*#%@'
 CIN_LEN = {0x8: 3, 0x9: 3, 0xA: 3, 0xB: 3, 0xC: 2, 0xD: 2, 0xE: 3, 0xF: 1, 0x2: 2, 0x3: 3,
            0x4: 3, 0x5: 1, 0x6: 2, 0x7: 3}
+
+
+FONT16 = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'firmware', 'drivers', 'font16.c')
+
+
+def load_font16(path=FONT16):
+    """{segment bits: character} from our firmware's font table (drivers/font16.c), so the
+    displays read back as the characters our firmware meant; None if the file is missing."""
+    if not os.path.exists(path):
+        return None
+    import re
+    names = {'SEG_A1': 1, 'SEG_A2': 2, 'SEG_B': 4, 'SEG_C': 8, 'SEG_D2': 16, 'SEG_D1': 32,
+             'SEG_E': 64, 'SEG_F': 128, 'SEG_H': 256, 'SEG_I': 512, 'SEG_J': 1024,
+             'SEG_G1': 2048, 'SEG_G2': 4096, 'SEG_K': 8192, 'SEG_L': 16384, 'SEG_M': 32768}
+    names.update(A=3, D=48, G=6144)
+    glyph = {}
+    for m in re.finditer(r"\['(\\?.)' - 32\] = ([^,]+),", open(path).read()):
+        ch = m.group(1)[-1]
+        bits = eval(m.group(2), {}, dict(names))
+        glyph.setdefault(bits, ch)
+    glyph.setdefault(0, ' ')
+    return glyph
 
 
 def guide_bits(key):
@@ -69,6 +94,9 @@ class Harness:
         syms0 = xsim.read_map(map0) if map0 else None
         syms1 = xsim.read_map(map1) if map1 else None
         self.b = s49emu.Board(tile0, tile1, ui_syms=syms0, usb_syms=syms1)
+        font = load_font16()
+        if font:                        # our glyphs first, NI's for the rest
+            self.b.lcd.glyph = {**s49emu.GLYPH, **font}
         self.din_seen = self.usb_seen = 0
         self.stopped = None
         self.window()
@@ -96,6 +124,25 @@ class Harness:
     def button(self, bit, down):
         inp = self.b.inputs
         inp.pressed = inp.pressed | 1 << bit if down else inp.pressed & ~(1 << bit)
+
+    def dev_event(self, typ, id_, value):
+        """DEV_EVENT to tile 0: from the stub, or with our tile 1 image put straight into tile
+        0's link chanend when no route into it is open (so it can't split a packet)."""
+        if self.b.link:
+            self.b.link.dev_event(typ, id_, value)
+            return
+        payload = struct.pack('<BBh', typ, id_, value)
+        toks = [(s49emu.HostLink.DEV_EVENT, False), (len(payload), False)] + \
+               [(x, False) for x in payload] + [(xsim.CT_END, True)]
+
+        def inject():
+            d = self.b.sys.chanend(s49emu.HostLink.LINK_TILE0)
+            if d is None or d.source is not None or d.buf:
+                self.at(0.05, inject)
+                return
+            d.buf.extend(toks)
+            d.notify(self.b.sys.now)
+        inject()
 
     def din_in(self, data):
         if self.b.link:
@@ -233,6 +280,8 @@ class Harness:
                     return ['error: `usb` needs the HostLink stub (no tile 1 image)']
                 self.b.link.usb = int(args[0]) & 1
                 self.b.link.send(self.b.link.USB_STATE, bytes([self.b.link.usb]))
+            elif cmd == 'event':
+                self.dev_event(int(args[0]), int(args[1]), int(args[2]))
             elif cmd == 'screen':
                 return ['screen'] + self.screen_lines() + ['end']
             elif cmd == 'leds':

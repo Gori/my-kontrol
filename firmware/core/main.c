@@ -9,10 +9,14 @@
 #define FRAME_MS 20                 /* at most 50 frames per second */
 #define EVENTS_PER_PASS 16
 
+/* pixel displays get the framebuffer here; a segment board's renderer
+   (ui/seg9.c) sends its own frame from ui_render() */
 static void blit_all(void)
 {
+#if !BOARD_SEG_DISPLAYS
     for (int p = 0; p < DISP_H / 8; p++)
         board_display_page(p, &gfx_fb[p * DISP_W]);
+#endif
 }
 
 void mk_main(void)
@@ -32,6 +36,9 @@ void mk_main(void)
     int stable = 0;
 
     for (;;) {
+#ifdef HAL_HAS_IDLE
+        hal_idle();
+#endif
         hal_watchdog_feed();
         usb_task();
 
@@ -48,6 +55,11 @@ void mk_main(void)
         }
         if ((int32_t)(now - splash_until) < 0)
             continue;
+#if BOARD_SEG_DISPLAYS
+        (void)page;
+        if (now - last_frame >= FRAME_MS && ui_render())
+            last_frame = now;
+#else
         /* one 8-pixel band per pass keeps every pass short */
         if (page >= 0) {
             board_display_page(page, &gfx_fb[page * DISP_W]);
@@ -57,5 +69,6 @@ void mk_main(void)
             last_frame = now;
             page = 0;
         }
+#endif
     }
 }

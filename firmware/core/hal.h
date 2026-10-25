@@ -76,6 +76,21 @@ void board_usb_pullup(int on);
 int board_diag(uint8_t *buf, int max);  /* board-specific bytes for the diag request */
 int board_serial(char *out, int max);   /* USB serial to report, or 0 to use the chip ID */
 
+/* Segment text displays (the S-series: 9 displays of 2 lines x 8 characters). A board with
+   BOARD_SEG_DISPLAYS > 0 (board_config.h) links ui/seg9.c instead of ui/oled.c; it hands
+   the board every frame as text, and the board's driver turns characters into segments.
+   Such a board never gets board_display_page; pixel boards never get board_seg_show. */
+#ifndef BOARD_SEG_DISPLAYS
+#define BOARD_SEG_DISPLAYS 0
+#endif
+#define SEG_CHARS 8
+typedef struct {
+    char line[2][SEG_CHARS];   /* ' ' = blank; a character the font lacks shows blank */
+    uint8_t dots[2];           /* bit c: the dot after character c of that line */
+    uint8_t meter;             /* the bar above the text: 0 = off .. 255 = full */
+} seg_display_t;
+void board_seg_show(const seg_display_t *d);   /* BOARD_SEG_DISPLAYS displays: draw them */
+
 /* Only called on boards with the cap, so other boards leave them out. */
 void board_key_light(uint8_t key, uint8_t r, uint8_t g, uint8_t b);   /* CAP_LIGHT_GUIDE, 0..255 each */
 void board_key_lights_flush(void);
@@ -92,5 +107,8 @@ void hal_unique_id(uint8_t out[12]);
 void hal_usb_init(void);           /* clock and reset the USB peripheral */
 void hal_tick_start(void);         /* starts the 100 us tick that calls board_tick() */
 void hal_mark_stable(void);        /* ran long enough: clear the crash counter */
+/* Optional: a platform that defines HAL_HAS_IDLE (platform.mk) gets hal_idle() once per
+   main-loop pass, to wait for input or the next millisecond instead of spinning. */
+void hal_idle(void);
 void hal_enter_bootloader(void) __attribute__((noreturn));
 void hal_reboot(void) __attribute__((noreturn));

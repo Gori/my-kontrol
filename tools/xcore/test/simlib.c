@@ -1,5 +1,6 @@
-/* The few C library functions the host tests use, for running them in xsim. Output goes
-   through _sim_putc (test/simrt.s). Not part of the firmware. */
+/* The few C library functions the host tests use, for running them in xsim (memcmp, strlen
+   and the mem* functions are in firmware/platform/xs1/rt.c). Output goes through _sim_putc
+   (test/simrt.s). Not part of the firmware. */
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -190,23 +191,6 @@ int fflush(FILE *f)
 {
     (void)f;
     return 0;
-}
-
-int memcmp(const void *a, const void *b, size_t n)
-{
-    const uint8_t *p = a, *q = b;
-    for (; n; n--, p++, q++)
-        if (*p != *q)
-            return *p - *q;
-    return 0;
-}
-
-size_t strlen(const char *s)
-{
-    const char *p = s;
-    while (*p)
-        p++;
-    return p - s;
 }
 
 int strcmp(const char *a, const char *b)

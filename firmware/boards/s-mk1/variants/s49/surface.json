@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "board": 2,
+  "name": "Komplete Kontrol S49",
+  "keys": { "count": 49, "lowest_note": 36, "velocity": true, "aftertouch": false, "light_guide": true },
+  "knobs": { "count": 8, "touch": true, "layout": "row" },
+  "encoder": { "turn": true, "push": true, "directions": 4, "touch": true },
+  "strips": [
+    { "id": "pitch", "touch": true, "output": "pitch-bend" },
+    { "id": "mod", "touch": true, "output": "cc" }
+  ],
+  "pedals": { "jacks": 2, "contacts": ["tip", "ring"], "expression": true },
+  "screen": { "kind": "segments", "displays": 9, "lines": 2, "chars": 8, "list_rows": 2 },
+  "lights": { "kind": "levels", "states": ["off", "dim", "on", "blink"] },
+  "controls": [
+    { "id": 0,  "name": "shift",         "label": "SHIFT",     "kind": "button", "light": true },
+    { "id": 1,  "name": "scale",         "label": "SCALE",     "kind": "button", "light": true, "keyboard_owned": true },
+    { "id": 2,  "name": "arp",           "label": "ARP",       "kind": "button", "light": true, "keyboard_owned": true },
+    { "id": 6,  "name": "loop",          "label": "LOOP",      "kind": "button", "light": true },
+    { "id": 9,  "name": "play",          "label": "PLAY",      "kind": "button", "light": true },
+    { "id": 10, "name": "rec",           "label": "REC",       "kind": "button", "light": true },
+    { "id": 11, "name": "stop",          "label": "STOP",      "kind": "button", "light": true },
+    { "id": 12, "name": "preset_up",     "label": "PRESET ▲",  "kind": "button", "light": true },
+    { "id": 13, "name": "preset_down",   "label": "PRESET ▼",  "kind": "button", "light": true },
+    { "id": 16, "name": "browser",       "label": "BROWSE",    "kind": "button", "light": true },
+    { "id": 19, "name": "octave_down",   "label": "OCT −",     "kind": "button", "light": true, "keyboard_owned": true },
+    { "id": 20, "name": "octave_up",     "label": "OCT +",     "kind": "button", "light": true, "keyboard_owned": true },
+    { "id": 21, "name": "nav_up",        "label": "▲",         "kind": "encoder_direction" },
+    { "id": 22, "name": "nav_left",      "label": "◀",         "kind": "encoder_direction" },
+    { "id": 23, "name": "nav_right",     "label": "▶",         "kind": "encoder_direction" },
+    { "id": 24, "name": "nav_down",      "label": "▼",         "kind": "encoder_direction" },
+    { "id": 25, "name": "nav_push",      "label": "encoder push", "kind": "encoder_push" },
+    { "id": 26, "name": "pedal_plug",    "label": "PEDAL",     "kind": "state" },
+    { "id": 34, "name": "instance",      "label": "INSTANCE",  "kind": "button", "light": true },
+    { "id": 39, "name": "page_left",     "label": "PAGE ◀",    "kind": "button", "light": true },
+    { "id": 40, "name": "page_right",    "label": "PAGE ▶",    "kind": "button", "light": true },
+    { "id": 44, "name": "back",          "label": "BACK",      "kind": "button", "light": true },
+    { "id": 45, "name": "enter",         "label": "ENTER",     "kind": "button", "light": true },
+    { "id": 46, "name": "encoder_touch", "label": "encoder touch", "kind": "state" }
+  ]
+}

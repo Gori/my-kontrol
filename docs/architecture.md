@@ -69,7 +69,7 @@ Controls:
 - **`ui/seg9.c`** draws the model on the S MK1's 9 segment displays:
   - Display 1 shows the title and the page.
   - Displays 2–9 show one knob each: the name, the value, and the bar.
-  - A 16-segment font goes in `ui/font16.c`.
+  - The 16-segment font is `drivers/font16.c` (the glyphs are ours).
 
 A screen the model can't express is a bug in the model, not a reason to draw in a board.
 
@@ -82,6 +82,12 @@ Implemented (core/screen.h, core/render.h, ui/oled.c). Refinements to the sketch
   line), not a 0..1 float, so no rounding is forced on the renderer.
 - gfx.c/gfx.h/font.h stay in core/ as the OLED renderer's tools (the sim and the
   board push its framebuffer); they are not moved under ui/.
+- Segment boards: `BOARD_SEG_DISPLAYS` (board_config.h) picks the text path. ui/seg9.c
+  fills 9 `seg_display_t` (2 lines of 8 characters, a dot per character, a bar 0..255)
+  and calls `board_seg_show()`; the board passes them to `drivers/st7565_seg.c`, which
+  maps characters (`drivers/font16.c`) to segment RAM and sends it. main.c and app.c skip
+  the pixel framebuffer on such boards. How each screen is laid out on the 9 displays is
+  described at the top of ui/seg9.c.
 
 ## Drivers needed for the S MK1
 
@@ -110,6 +116,19 @@ On the XS1, the board splits work over two tiles:
 | 0 | the core and the panel drivers | NI's firmware puts these there |
 
 Timing-critical loops run in their own hardware threads: USB, the UARTs, LED brightness and the display bus. Tiles talk over channels, through one small message interface in `platform/xs1`.
+
+Implemented (platform/xs1, boards/s-mk1):
+- The tile link (`platform/xs1/link.h`): fixed chanends, tile 1 speaks first, packets
+  `[type, n, payload]` + END for USB-MIDI, 5-pin bytes, flash requests and (developer
+  builds) injected events.
+- Tile 0: core/main.c with the HAL in `hal.c` (reference timer, a 100 µs tick thread, an
+  optional `hal_idle()` that waits for link input or the next millisecond) and
+  `tile0_link.c` in place of usb/usb_device.c and TinyUSB. Settings flash is a 4 KB RAM
+  mirror written through to SPI flash on tile 1.
+- Tile 1 (`tile1.c`): the link, the 5-pin UART (TX and RX threads) and the SPI flash. USB
+  is a stub (no host).
+- `make BOARD=s49` builds both tile images (`build/s49/tile0.bin`, `tile1.bin`);
+  `tools/xcore/s49run.py` runs them on the board emulator.
 
 ## Tests
 

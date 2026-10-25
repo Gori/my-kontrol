@@ -8,13 +8,15 @@ CFLAGS = -g -std=gnu11 -Wall -Wextra -Wno-missing-field-initializers -fsanitize=
 BIN = build
 CORE = ../core
 
-all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0 $(BIN)/test_usb
+all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0 $(BIN)/test_usb \
+     $(BIN)/test_seg
 	$(BIN)/test_smartplay
 	$(BIN)/test_core
 	$(BIN)/test_host
 	$(BIN)/test_midi_din
 	$(BIN)/test_midi_din0
 	$(BIN)/test_usb
+	$(BIN)/test_seg
 
 $(BIN):
 	mkdir -p $@
@@ -34,6 +36,10 @@ $(BIN)/test_host: test_host.c host/fake_hal.c $(CORE)/host.c $(CORE)/mcu.c $(COR
 XS1 = ../platform/xs1
 $(BIN)/test_usb: test_usb.c $(XS1)/usb_crc.c $(XS1)/usb_packet.c $(XS1)/usb_ep.c | $(BIN)
 	$(CC) $(CFLAGS) -I$(XS1) $^ -o $@
+
+# S-series displays: 16-segment font, ST7565 segment map, the seg9 renderer
+$(BIN)/test_seg: test_seg.c ../drivers/font16.c ../drivers/st7565_seg.c ../ui/seg9.c | $(BIN)
+	$(CC) $(CFLAGS) -I../drivers $^ -o $@
 
 APP_SRCS = host/fake_hal.c $(filter-out $(CORE)/main.c,$(wildcard $(CORE)/*.c)) ../ui/oled.c
 

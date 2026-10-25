@@ -54,14 +54,18 @@
       "type": "object",
       "properties": {
         "jacks": { "type": "integer" },
-        "contacts": { "type": "array", "items": { "enum": ["tip", "ring"] } }
+        "contacts": { "type": "array", "items": { "enum": ["tip", "ring"] } },
+        "expression": { "type": "boolean", "description": "a continuous (expression) pedal input" }
       }
     },
     "screen": {
       "type": "object",
       "properties": {
-        "kind": { "enum": ["none", "mono", "color"] },
+        "kind": { "enum": ["none", "mono", "color", "segments"], "description": "segments: text displays (displays x lines x chars)" },
         "width": { "type": "integer" },
+        "displays": { "type": "integer", "description": "segments: number of displays" },
+        "lines": { "type": "integer", "description": "segments: text lines per display" },
+        "chars": { "type": "integer", "description": "segments: characters per line" },
         "height": { "type": "integer" },
         "text_rows": { "type": "integer" },
         "list_rows": { "type": "integer" }

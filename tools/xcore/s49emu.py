@@ -167,17 +167,19 @@ class LCD:
 
     def text(self, d):
         r1, r2, d1, d2, icons = self.cells(d)
+        glyph = getattr(self, 'glyph', None) or GLYPH
 
         def line(cells, dots):
             s = ''
             for v, dot in zip(cells, dots):
-                s += GLYPH.get(v, '?') + ('.' if dot else '')
+                s += glyph.get(v, '?') + ('.' if dot else '')
             return s
         return line(r1, d1), line(r2, d2), ''.join('#' if i else '-' for i in icons)
 
     def unknown(self, d):
         r1, r2 = self.cells(d)[:2]
-        return [v for v in r1 + r2 if v not in GLYPH]
+        glyph = getattr(self, 'glyph', None) or GLYPH
+        return [v for v in r1 + r2 if v not in glyph]
 
 
 class Chain:
@@ -576,12 +578,13 @@ class HostLink:
       0x03 DIN_RX       raw bytes from the 5-pin MIDI IN
       0x04 FLASH_DATA   bytes read
       0x05 FLASH_DONE   u8 0 = ok
+      0x06 DEV_EVENT    developer builds: u8 type, u8 id, s16 value, given to app_event()
     The stub: no USB host (USB_STATE 0 unless set), a 1 MB erased flash in RAM, DIN and USB
     traffic recorded in .din_tx and .usb_tx, input injected with din_rx() / usb_rx().
     """
     USB_MIDI_TX, DIN_TX, FLASH_READ, FLASH_ERASE, FLASH_WRITE = 0x81, 0x82, 0x83, 0x84, 0x85
     LINK_TILE0 = 0x80000002
-    USB_STATE, USB_MIDI_RX, DIN_RX, FLASH_DATA, FLASH_DONE = 1, 2, 3, 4, 5
+    USB_STATE, USB_MIDI_RX, DIN_RX, FLASH_DATA, FLASH_DONE, DEV_EVENT = 1, 2, 3, 4, 5, 6
 
     def __init__(self, sys_, node=0x0000):
         self.sys = sys_
@@ -663,6 +666,10 @@ class HostLink:
 
     def wake(self, time=None):
         self.pump(time)
+
+    def dev_event(self, typ, id_, value):
+        """An event for the core (DEV builds only), like tools/mktest.py over USB."""
+        return self.send(self.DEV_EVENT, struct.pack('<BBh', typ, id_, value))
 
     def din_rx(self, data):
         return self.send(self.DIN_RX, bytes(data))

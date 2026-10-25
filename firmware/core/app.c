@@ -87,8 +87,10 @@ void app_enter_bootloader(void)
         settings_save_now();
     /* show the update screen, then let USB send what is queued */
     ui_render();
+#if !BOARD_SEG_DISPLAYS                 /* a segment renderer has sent its frame already */
     for (int p = 0; p < DISP_H / 8; p++)
         board_display_page(p, &gfx_fb[p * DISP_W]);
+#endif
     hal_delay_ms(20);
     hal_enter_bootloader();
 }

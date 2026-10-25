@@ -10,6 +10,7 @@ which emits assembly but has no assembler or object writer; the rest is here.
 | `xas.py` | assembler: clang's XS1 assembly → relocatable object (JSON) |
 | `xld.py` | linker: objects → one tile RAM image + map; gc of unreferenced `.cc_top` blocks; picks every instruction size (relaxation) |
 | `ximage.py` | `--check` validates any xflash upgrade image (header, segment table, CRCs, padding); rebuilds NI's image locally. Our images come from XMOS's xflash |
+| `xcc.py` | cc-style driver (`-c` = clang -S + xas) so the firmware Makefile builds XS1 objects |
 | `xsim.py` | XS1 simulator: tiles, 8 hardware threads each, timers, ports, clock blocks, channels (also between tiles), locks, synchronisers, events |
 | `s49run.py` | bring-up harness for our S49 firmware: runs our tile images, shows displays and lights, injects input, captures MIDI; `--stdio` for scripted tests |
 | `s49emu.py` | Komplete Kontrol S49 MK1 board: both tiles plus LCD controllers, LED chains, input registers, I²C sensor MCUs, keybed UART, DIN MIDI, SPI flash |
@@ -79,6 +80,8 @@ variables (two locals at `sp[1]`, seen in test_smartplay), nothing to do with th
   test_host) in xsim and compares their output with the same sources built for the Mac.
 - `s49`: builds `test/s49_tile0.c` + `test/s49_tile1.c` (a minimal LCD/LED driver and both
   sides of the tile link) and runs them in the harness, with both tiles and with tile 0 alone.
+- `fw`: `make BOARD=s49 DEV=1` (our firmware), then the harness with both tiles: splash,
+  home screen, CC page, a knob's CC on DIN OUT, the menu.
 - `emu` (opt-in, about 1 min, needs NI's image locally): boots NI's S49 firmware on the
   board model and checks the LCD init sequence, the standalone display text and that a key
   press gives a note on DIN MIDI OUT.
@@ -136,7 +139,8 @@ sides.
   (R G B Y M C W, capital = bright), the button/strip chain as a level per bit.
 - `--stdio`: commands on stdin, time moves only on `tick MS` (deterministic). `key NOTE [RAW]`,
   `keyoff`, `knob N DELTA`, `knob-set`, `btn BIT [MS]`, `btn-down/up`, `pedal`, `sw`, `touch`,
-  `din-in HEX`, `in CABLE HEX`, `usb 0|1`, `screen`, `leds`, `threads`, `quit`. After a tick it
+  `din-in HEX`, `in CABLE HEX`, `usb 0|1`, `event TYPE ID VALUE` (DEV=1 builds: an event
+  for the core over the link, like tools/mktest.py), `screen`, `leds`, `threads`, `quit`. After a tick it
   prints `din-out <hex>` and `out <cable> <hex>` for MIDI sent; `stopped <reason>` on a crash.
   Buttons are by input bit until the bit map is known.
 
@@ -144,4 +148,9 @@ sides.
 python3 tools/xcore/xtest.py s49          # builds tools/xcore/build/s49_tile0.bin, s49_tile1.bin
 python3 tools/xcore/s49run.py tools/xcore/build/s49_tile0.bin --ms 20
 printf 'tick 5\nscreen\nin 0 90 3C 64\ntick 2\nquit\n' | python3 tools/xcore/s49run.py tools/xcore/build/s49_tile0.bin --stdio
+make -C firmware BOARD=s49 DEV=1          # our firmware
+printf 'tick 1400\nscreen\nevent 2 0 1\ntick 30\nscreen\nquit\n' | \
+  python3 tools/xcore/s49run.py firmware/build/s49-dev/tile0.bin firmware/build/s49-dev/tile1.bin --stdio
 ```
+The harness reads the glyphs from `firmware/drivers/font16.c`, so the displays read back as
+the characters our firmware meant.
