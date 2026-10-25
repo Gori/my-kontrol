@@ -8,12 +8,13 @@ CFLAGS = -g -std=gnu11 -Wall -Wextra -Wno-missing-field-initializers -fsanitize=
 BIN = build
 CORE = ../core
 
-all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0
+all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0 $(BIN)/test_usb
 	$(BIN)/test_smartplay
 	$(BIN)/test_core
 	$(BIN)/test_host
 	$(BIN)/test_midi_din
 	$(BIN)/test_midi_din0
+	$(BIN)/test_usb
 
 $(BIN):
 	mkdir -p $@
@@ -28,7 +29,13 @@ $(BIN)/test_core: test_core.c host/fake_hal.c $(CORE)/midi.c $(CORE)/play.c $(CO
 $(BIN)/test_host: test_host.c host/fake_hal.c $(CORE)/host.c $(CORE)/mcu.c $(CORE)/midi.c | $(BIN)
 	$(CC) $(CFLAGS) $^ -o $@
 
-APP_SRCS = host/fake_hal.c $(filter-out $(CORE)/main.c,$(wildcard $(CORE)/*.c))
+# XS1 ULPI USB driver, pure logic only (no ports): CRCs, framing, ULPI register
+# cycle, DCD endpoint/enumeration state machine.
+XS1 = ../platform/xs1
+$(BIN)/test_usb: test_usb.c $(XS1)/usb_crc.c $(XS1)/usb_packet.c $(XS1)/usb_ep.c | $(BIN)
+	$(CC) $(CFLAGS) -I$(XS1) $^ -o $@
+
+APP_SRCS = host/fake_hal.c $(filter-out $(CORE)/main.c,$(wildcard $(CORE)/*.c)) ../ui/oled.c
 
 # the whole core, with 5-pin MIDI and without (the M32)
 $(BIN)/test_midi_din: test_midi_din.c $(APP_SRCS) | $(BIN)

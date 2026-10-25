@@ -10,14 +10,20 @@ LDLIBS = -framework CoreMIDI -framework CoreFoundation
 BUILD = build
 
 CORE_SRCS = $(filter-out ../core/main.c,$(wildcard ../core/*.c))
+UI_SRCS = ../ui/oled.c
 SIM_SRCS = sim.c sim_hal.c sim_midi.c
 SURFACE = $(BUILD)/surface_json.c
-OBJS = $(patsubst ../core/%.c,$(BUILD)/core/%.o,$(CORE_SRCS)) $(patsubst %.c,$(BUILD)/%.o,$(SIM_SRCS)) \
+OBJS = $(patsubst ../core/%.c,$(BUILD)/core/%.o,$(CORE_SRCS)) \
+       $(patsubst ../ui/%.c,$(BUILD)/ui/%.o,$(UI_SRCS)) $(patsubst %.c,$(BUILD)/%.o,$(SIM_SRCS)) \
        $(BUILD)/surface_json.o
 
 all: $(BUILD)/mk-sim
 
 $(BUILD)/core/%.o: ../core/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/ui/%.o: ../ui/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 

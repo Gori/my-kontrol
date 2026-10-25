@@ -73,6 +73,16 @@ Controls:
 
 A screen the model can't express is a bug in the model, not a reason to draw in a board.
 
+Implemented (core/screen.h, core/render.h, ui/oled.c). Refinements to the sketch above:
+- A renderer is one call, `ui_renderer.show(screen_t*)`; it clears, draws the base
+  screen, then the lost banner, then the popup. The board's Makefile picks the one
+  renderer source (`BOARD_UI_SRCS`, default `ui/oled.c`), so ui/seg9.c is added
+  without touching core/ui.c.
+- A knob slot's bar is stored as `bar`/`bar_max` (plus a style and an optional meter
+  line), not a 0..1 float, so no rounding is forced on the renderer.
+- gfx.c/gfx.h/font.h stay in core/ as the OLED renderer's tools (the sim and the
+  board push its framebuffer); they are not moved under ui/.
+
 ## Drivers needed for the S MK1
 
 | Driver | Chip / protocol | Reusable by |

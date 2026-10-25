@@ -1,10 +1,11 @@
 #include "ui.h"
 #include "app.h"
-#include "gfx.h"
 #include "hal.h"
 #include "host.h"
 #include "mcu.h"
 #include "play.h"
+#include "render.h"
+#include "screen.h"
 #include "settings.h"
 #include "settings_store.h"
 #include "smartplay.h"
@@ -284,7 +285,8 @@ static uint8_t blink;
 static uint16_t seen_host, seen_lcd, seen_tc, seen_note, seen_key_note;
 static uint32_t key_label_ms;           /* the label of the key just played is on screen */
 static const char *key_label;
-static uint8_t msg_scroll, seen_msg_id;
+static int msg_scroll;
+static uint8_t seen_msg_id;
 static int8_t seen_link = -1;
 
 static int get(const item_t *it)
@@ -574,146 +576,83 @@ int ui_input(uint8_t in, int16_t value)
     return 1;
 }
 
-/* ---------- rendering ---------- */
+/* ---------- the screen model ----------
+   ui.c decides what is shown and fills a screen_t; ui/oled.c (render.h) draws
+   it. String content is built here into these scratch buffers, valid until the
+   renderer returns, one frame at a time. */
 
-static void render_splash_lines(const char *a, const char *b)
+/* Only one base screen is built per ui_render() call, so the base screens share
+   one arena. The popup overlays a base screen (both are read when the renderer
+   draws), so its two buffers sit outside the union. */
+static struct {
+    union {
+        struct { char status[24], centre[16], vel[8], hint[24]; } play;
+        struct { char title[16], cc[BOARD_KNOBS][4]; } ccpage;
+        char tc[12], bank[8], count[12], about[24];   /* mackie / host / list / dialog + splash */
+        char val[ROWS][22];                            /* menu row values */
+    } u;
+    char pop_t[22], pop_v[8];                          /* knob popup */
+} sb;
+
+static void build_play(screen_t *s)
 {
-    gfx_text_center(0, a, &font_huge);
-    gfx_text_center(DISP_H - 8, b, &font_small);
-}
+    const settings_t *st = &settings;
+    char *p;
+    s->kind = SCR_PLAY;
 
-void ui_splash(void)
-{
-    gfx_clear();
-    char b[24];
-    put_str(put_str(put_str(b, board_info.short_name), "  "), MK_VERSION);
-    render_splash_lines("My Kontrol", b);
-}
+    p = put_int(put_str(sb.u.play.status, "CH"), st->channel + 1, 0);
+    if (st->octave) p = put_int(put_str(p, " OCT"), st->octave, 1);
+    if (st->transpose) p = put_int(put_str(p, " TR"), st->transpose, 1);
+    if (st->split_on) p = put_str(p, " SPLIT");
+    s->u.play.status = sb.u.play.status;
 
-/* top status line shared by the home screens */
-static void status_line(const char *badge)
-{
-    char b[24], *p = b;
-    const settings_t *s = &settings;
-    p = put_int(put_str(p, "CH"), s->channel + 1, 0);
-    if (s->octave) p = put_int(put_str(p, " OCT"), s->octave, 1);
-    if (s->transpose) p = put_int(put_str(p, " TR"), s->transpose, 1);
-    if (s->split_on) p = put_str(p, " SPLIT");
-    gfx_text(0, 0, b, &font_small);
-    if (badge) {
-        int w = gfx_text_width(badge, &font_small);
-        gfx_text(DISP_W - w, 0, badge, &font_small);
-        gfx_invert(DISP_W - w - 1, 0, w + 1, 8);
-    }
-}
-
-static void render_play(void)
-{
-    char b[24], *p;
-    const settings_t *s = &settings;
-    status_line(0);
-
-    /* centre: scale, or the last note played */
-    if (s->sp.scale_mode != SCALE_OFF) {
-        p = put_str(put_str(b, note_names[s->sp.root]), " ");
-        copy(p, sp_scales[s->sp.scale].name, b + 15 - p);
-        gfx_text(0, 9, b, &font_large);
+    if (st->sp.scale_mode != SCALE_OFF) {
+        p = put_str(put_str(sb.u.play.centre, note_names[st->sp.root]), " ");
+        copy(p, sp_scales[st->sp.scale].name, sb.u.play.centre + 15 - p);
+        s->u.play.centre = sb.u.play.centre;
     } else if (play_note_gen) {
-        put_note(b, play_last_note);
-        gfx_text(0, 9, b, &font_large);
+        put_note(sb.u.play.centre, play_last_note);
+        s->u.play.centre = sb.u.play.centre;
     } else {
-        gfx_text(0, 9, "My Kontrol", &font_large);
+        s->u.play.centre = "My Kontrol";
     }
 
-    /* velocity meter on the right edge */
     if (play_note_gen) {
-        int h = play_last_velocity * 22 / 127;
-        gfx_fill(DISP_W - 3, 31 - h, 3, h + 1, 1);
-        put_int(b, play_last_velocity, 0);
-        gfx_text_right(DISP_W - 5, 17, b, &font_small);
+        s->u.play.has_velocity = 1;
+        s->u.play.velocity = play_last_velocity;
+        put_int(sb.u.play.vel, play_last_velocity, 0);
+        s->u.play.vel_text = sb.u.play.vel;
     }
 
-    /* bottom: what is shaping the notes */
-    p = b;
+    p = sb.u.play.hint;
     *p = 0;
-    if (s->sp.repeat_on) p = put_str(put_str(p, "RPT "), sp_arp_rate_names[s->sp.arp_rate]);
-    else if (s->sp.arp_on) p = put_str(put_str(p, "ARP "), sp_arp_rate_names[s->sp.arp_rate]);
-    if (s->sp.repeat_on || s->sp.arp_on) {
+    if (st->sp.repeat_on) p = put_str(put_str(p, "RPT "), sp_arp_rate_names[st->sp.arp_rate]);
+    else if (st->sp.arp_on) p = put_str(put_str(p, "ARP "), sp_arp_rate_names[st->sp.arp_rate]);
+    if (st->sp.repeat_on || st->sp.arp_on) {
         p = put_str(p, " ");
-        p = s->sp.ext_clock ? put_str(p, "EXT") : put_bpm(p, s->sp.bpm_x10);
+        p = st->sp.ext_clock ? put_str(p, "EXT") : put_bpm(p, st->sp.bpm_x10);
     }
-    if (s->sp.chord != CHORD_OFF) {
-        if (p != b) p = put_str(p, " ");
-        p = put_str(p, sp_chord_names[s->sp.chord]);
+    if (st->sp.chord != CHORD_OFF) {
+        if (p != sb.u.play.hint) p = put_str(p, " ");
+        p = put_str(p, sp_chord_names[st->sp.chord]);
     }
-    if (s->sp.strum_ms && p - b < 18) p = put_str(p, " STRUM");
-    if (p == b && !play_note_gen)
-        put_str(b, "Push: menu  Turn: pages");
-    gfx_text_n(0, 25, b, 25, &font_small);
+    if (st->sp.strum_ms && p - sb.u.play.hint < 18) p = put_str(p, " STRUM");
+    if (p == sb.u.play.hint && !play_note_gen)
+        put_str(sb.u.play.hint, "Push: menu  Turn: pages");
+    s->u.play.hint = sb.u.play.hint;
 }
 
-static void render_knobs(void)
+static void build_ccpage(screen_t *s)
 {
-    char b[24], *p = put_int(put_str(b, "Knobs  Page "), settings.knob_page + 1, 0);
+    s->kind = SCR_CCPAGE;
+    char *p = put_int(put_str(sb.u.ccpage.title, "Knobs  Page "), settings.knob_page + 1, 0);
     (void)p;
-    gfx_text(0, 0, b, &font_small);
-    int w = DISP_W / BOARD_KNOBS;
+    s->u.ccpage.title = sb.u.ccpage.title;
+    s->u.ccpage.n = BOARD_KNOBS;
     for (int k = 0; k < BOARD_KNOBS; k++) {
-        int x = k * w, v = app_knob_value(settings.knob_page, k);
-        int h = v * 14 / 127;
-        gfx_frame(x + 2, 9, w - 4, 16);
-        gfx_fill(x + 3, 24 - h, w - 6, h, 1);
-        put_int(b, settings.knob_cc[settings.knob_page][k], 0);
-        gfx_text((x + w / 2) - gfx_text_width(b, &font_small) / 2, 25, b, &font_small);
-    }
-}
-
-/* title: what the knobs control, inverted, at the left */
-static int mode_title(const char *name)
-{
-    int w = gfx_text(1, 0, name, &font_small);
-    gfx_invert(0, 0, w + 1, 8);
-    return w + 4;
-}
-
-static void render_mackie(void)
-{
-    char b[24];
-    mode_title(knob_target_names[settings.knob_target]);
-    /* position: bars.beats (or the SMPTE digits) from the timecode display */
-    const char *tc = mcu_timecode;
-    char *p = b;
-    for (int i = 0; i < 5; i++) {
-        if (tc[i] != ' ' || p != b)
-            *p++ = tc[i];
-        if (i == 2 && p != b)
-            *p++ = mcu_led[MCU_LED_BEATS] ? '.' : ':';
-    }
-    *p = 0;
-    gfx_text_right(DISP_W, 0, b, &font_small);
-    /* 8 knobs: the DAW's name for each (LCD top row) and its ring position */
-    for (int k = 0; k < 8; k++) {
-        int x = (k & 3) * 32, y = k < 4 ? 8 : 20;
-        gfx_text_n(x, y, &mcu_lcd[0][k * 7], 6, &font_small);
-        uint8_t ring = mcu_ring[k], pos = ring & 0x0F, mode = (ring >> 4) & 3;
-        if (pos)
-            gfx_bar(x, y + 8, 29, 3, pos - 1, 10, mode == 1);
-        else
-            gfx_hline_dotted(x, y + 9, 29);
-    }
-}
-
-/* 8 knobs: name, position bar, and (meters) a level line under the bar */
-static void knob_cells(const char names[][HOST_TEXT_LEN / 2 + 1])
-{
-    int meters = host.features & HF_METERS;
-    for (int k = 0; k < 8; k++) {
-        int x = (k & 3) * 32, y = k < 4 ? 8 : 20;
-        gfx_text_n(x, y, names[k], 6, &font_small);
-        if (host.knob_flags[k] & 1)
-            gfx_bar(x, y + 8, 29, 3, host.knob_pos[k], 127, host.knob_flags[k] & 2);
-        if (meters && host.meter[k])
-            gfx_fill(x, y + 11, (host.meter[k] * 29 + 126) / 127, 1, 1);
+        s->u.ccpage.knob[k].value = app_knob_value(settings.knob_page, k);
+        put_int(sb.u.ccpage.cc[k], settings.knob_cc[settings.knob_page][k], 0);
+        s->u.ccpage.knob[k].cc = sb.u.ccpage.cc[k];
     }
 }
 
@@ -724,54 +663,96 @@ static const char *host_title(void)
     return n ? n : host.view < VIEW_COUNT ? names[host.view] : "Host";
 }
 
-/* top right: what the page shows, or the label of the key just played */
-static void host_top_right(int x, int device)
+/* top right: the device / extra text, or the label of the key just played */
+static void build_host_right(screen_t *s, int device)
 {
-    char b[26], *p = b, bank[8];
-    int room = (DISP_W - x) / 5;
     const char *d = host.device, *extra = host.subtitle;
     if (device && !d[0])
         d = "None";
     if (!device && (host.proto < 2 || !d[0]))   /* mixer: v1 hosts leave the device name behind */
         d = host.subtitle[0] ? host.subtitle : host.track, extra = "";
     if (host.page_banks > 1) {         /* v2: "2/6" */
-        char *q = put_int(bank, host.page_bank + 1, 0);
+        char *q = put_int(sb.u.bank, host.page_bank + 1, 0);
         *q++ = '/';
         put_int(q, host.page_banks, 0);
-        extra = bank;
+        extra = sb.u.bank;
     }
     if (key_label_ms && key_label)
         d = key_label, extra = "";
-    while (*d && p - b < room) *p++ = *d++;
-    if (extra[0] && p - b + 2 < room) {
-        *p++ = ' ';
-        for (d = extra; *d && p - b < room; ) *p++ = *d++;
+    s->u.knobs.right_a = d;
+    s->u.knobs.right_b = extra;
+    s->u.knobs.room_limit = 1;
+}
+
+static void build_host_slots(screen_t *s)
+{
+    int meters = host.features & HF_METERS;
+    for (int k = 0; k < 8; k++) {
+        knob_slot_t *sl = &s->u.knobs.slot[k];
+        sl->name = host.knob_name[k];
+        sl->name_len = 6;
+        sl->value = host.knob_value[k];
+        if (host.knob_flags[k] & 1) {
+            sl->bar_style = BAR_FILL;
+            sl->bar = host.knob_pos[k];
+            sl->bar_max = 127;
+            sl->bipolar = host.knob_flags[k] & 2;
+        }
+        if (meters && host.meter[k])
+            sl->meter = host.meter[k];
+    }
+}
+
+static void build_host_device(screen_t *s)
+{
+    s->kind = SCR_KNOBS;
+    s->u.knobs.title = host_title();
+    build_host_right(s, 1);
+    build_host_slots(s);
+    if (host.features & HF_METERS)
+        s->u.knobs.channel_meter =
+            host.channel_meter[0] > host.channel_meter[1] ? host.channel_meter[0] : host.channel_meter[1];
+}
+
+static void build_host_mixer(screen_t *s)
+{
+    s->kind = SCR_KNOBS;
+    s->u.knobs.title = host_title();
+    build_host_right(s, 0);
+    build_host_slots(s);
+}
+
+static void build_mackie(screen_t *s)
+{
+    s->kind = SCR_KNOBS;
+    s->u.knobs.title = knob_target_names[settings.knob_target];
+    /* position: bars.beats (or the SMPTE digits) from the timecode display */
+    const char *tc = mcu_timecode;
+    char *p = sb.u.tc;
+    for (int i = 0; i < 5; i++) {
+        if (tc[i] != ' ' || p != sb.u.tc)
+            *p++ = tc[i];
+        if (i == 2 && p != sb.u.tc)
+            *p++ = mcu_led[MCU_LED_BEATS] ? '.' : ':';
     }
     *p = 0;
-    gfx_text_right(DISP_W, 0, b, &font_small);
-}
-
-static void channel_meter(void)
-{
-    if (!(host.features & HF_METERS))
-        return;
-    int l = host.channel_meter[0] > host.channel_meter[1] ? host.channel_meter[0] : host.channel_meter[1];
-    int h = l * 23 / 127;
-    if (h)
-        gfx_fill(DISP_W - 2, 31 - h, 2, h + 1, 1);
-}
-
-static void render_host_device(void)
-{
-    host_top_right(mode_title(host_title()), 1);
-    knob_cells(host.knob_name);
-    channel_meter();
-}
-
-static void render_host_mixer(void)
-{
-    host_top_right(mode_title(host_title()), 0);
-    knob_cells(host.knob_name);
+    s->u.knobs.right_a = sb.u.tc;
+    s->u.knobs.right_b = "";
+    for (int k = 0; k < 8; k++) {
+        knob_slot_t *sl = &s->u.knobs.slot[k];
+        sl->name = &mcu_lcd[0][k * 7];
+        sl->name_len = 6;
+        sl->value = &mcu_lcd[1][k * 7];
+        uint8_t ring = mcu_ring[k], pos = ring & 0x0F, mode = (ring >> 4) & 3;
+        if (pos) {
+            sl->bar_style = BAR_FILL;
+            sl->bar = pos - 1;
+            sl->bar_max = 10;
+            sl->bipolar = mode == 1;
+        } else {
+            sl->bar_style = BAR_DOTTED;
+        }
+    }
 }
 
 static const host_row_t *cached_row(uint16_t index)
@@ -782,202 +763,127 @@ static const host_row_t *cached_row(uint16_t index)
     return 0;
 }
 
-static void render_host_list(void)
+static void build_host_list(screen_t *s)
 {
-    char b[26], *p;
-    int x = mode_title(host.list_title[0] ? host.list_title : host_title());
+    s->kind = SCR_LIST;
+    s->u.list.title = host.list_title[0] ? host.list_title : host_title();
+    s->u.list.total = host.list_total;
+    s->u.list.cursor = host.list_cursor;
+    s->u.list.first = host.list_first;
     if (host.list_total) {
-        p = put_int(b, host.list_cursor + 1, 0);
+        char *p = put_int(sb.u.count, host.list_cursor + 1, 0);
         *p++ = '/';
         put_int(p, host.list_total, 0);
-        if (gfx_text_width(b, &font_small) < DISP_W - x)
-            gfx_text_right(DISP_W, 0, b, &font_small);
-    }
-    if (!host.list_total) {
-        gfx_text(2, 12, "Empty", &font_small);
-        return;
+        s->u.list.count = sb.u.count;
     }
     for (int r = 0; r < HOST_LIST_ROWS; r++) {
         uint16_t i = host.list_first + r;
-        if (i >= host.list_total)
-            break;
-        int y = 8 + r * 8;
-        const host_row_t *row = cached_row(i);
-        p = b;
-        *p++ = !row ? ' ' : row->flags & ROW_PLAYING ? '>' : row->flags & ROW_CHECKED ? '+' : ' ';
-        const char *t = row ? row->text : "...";
-        while (*t && p - b < 23) *p++ = *t++;
-        *p = 0;
-        gfx_text(1, y, b, &font_small);
-        if (row && (row->flags & ROW_FOLDER))
-            gfx_text_right(DISP_W - 1, y, "/", &font_small);
-        if (row && (row->flags & ROW_DISABLED))
-            gfx_hline_dotted(6, y + 4, gfx_text_width(b, &font_small) - 6);
-        if (i == host.list_cursor)
-            gfx_invert(0, y, DISP_W, 8);
+        const host_row_t *row = i < host.list_total ? cached_row(i) : 0;
+        s->u.list.row[r].present = row != 0;
+        s->u.list.row[r].flags = row ? row->flags : 0;
+        s->u.list.row[r].text = row ? row->text : 0;
     }
 }
 
-/* the host's message, word-wrapped, 4 lines from msg_scroll */
-#define MSG_COLS (DISP_W / 5)
-
-static int wrap_line(const char *s, int i, int *len)
+static void build_host_message(screen_t *s)
 {
-    while (s[i] == ' ') i++;
-    int n = 0, cut = -1;
-    while (s[i + n] && s[i + n] != '\n' && n < MSG_COLS) {
-        if (s[i + n] == ' ') cut = n;
-        n++;
-    }
-    int next = i + n;
-    if (s[next] == '\n') next++;
-    else if (s[next] && s[next] != ' ' && cut > 0) next = i + cut, n = cut;
-    *len = n;
-    return next;
+    s->kind = SCR_MESSAGE;
+    s->u.message.text = host.msg;
+    s->u.message.scroll = &msg_scroll;
+    s->u.message.busy_dot = (host.msg_flags & MSG_BUSY) && blink;
 }
 
-static void render_host_message(void)
-{
-    const char *s = host.msg;
-    int lines = 0, i = 0, len;
-    while (s[i]) { i = wrap_line(s, i, &len); lines++; }
-    int max = lines > 4 ? lines - 4 : 0;
-    if (msg_scroll > max) msg_scroll = max;
-    i = 0;
-    for (int l = 0; s[i] && l < msg_scroll + 4; l++) {
-        int start = i;
-        while (s[start] == ' ') start++;
-        i = wrap_line(s, i, &len);
-        if (l >= msg_scroll)
-            gfx_text_n(0, (l - msg_scroll) * 8, s + start, len, &font_small);
-    }
-    if (max) {                          /* scroll position */
-        int h = 32 * 4 / lines, y = (32 - h) * msg_scroll / max;
-        gfx_fill(DISP_W - 1, y, 1, h, 1);
-    }
-    if ((host.msg_flags & MSG_BUSY) && blink)
-        gfx_fill(DISP_W - 4, 0, 3, 3, 1);
-}
-
-static void render_host_clips(void)
+static void build_clips(screen_t *s)
 {
     int cr = host.cursor_row, cc = host.cursor_col;
-    gfx_text_n(0, 0, cr < GRID_ROWS ? host.row[cr] : "", 12, &font_small);
-    if (cc < GRID_COLS)
-        gfx_text_right(DISP_W, 0, host.col[cc], &font_small);
+    s->kind = SCR_CLIPS;
+    s->u.clips.row_label = cr < GRID_ROWS ? host.row[cr] : "";
+    s->u.clips.row_label_len = 12;
+    s->u.clips.col_label = cc < GRID_COLS ? host.col[cc] : 0;
+    s->u.clips.rows = host.grid_rows;
+    s->u.clips.cols = host.grid_cols;
+    s->u.clips.cr = cr;
+    s->u.clips.cc = cc;
+    s->u.clips.blink = blink;
     for (int r = 0; r < host.grid_rows; r++)
-        for (int c = 0; c < host.grid_cols; c++) {
-            int x = c * 16 + 2, y = 9 + r * 6, st = host.grid[r][c];
-            switch (st) {
-            case GRID_EMPTY: gfx_pixel(x + 6, y + 1, 1); break;
-            case GRID_ARMED: gfx_fill(x + 4, y + 1, 5, 1, 1); break;
-            case GRID_STOPPED: gfx_frame(x + 1, y, 10, 4); break;
-            case GRID_PLAYING: gfx_fill(x + 1, y, 10, 4, 1); break;
-            case GRID_RECORDING: case GRID_QUEUED: case GRID_QUEUED_REC:
-                if (blink) gfx_fill(x + 1, y, 10, 4, 1); else gfx_frame(x + 1, y, 10, 4);
-                break;
-            }
-            if (r == cr && c == cc)
-                gfx_frame(x - 1, y - 1, 14, 6);
-        }
+        for (int c = 0; c < host.grid_cols; c++)
+            s->u.clips.cell[r][c] = host.grid[r][c];
 }
 
-static void render_menu(void)
+static void build_menu(screen_t *s)
 {
     const menu_t *m = stack[depth];
-    int tx = gfx_text(1, 0, m->title, &font_small);
-    gfx_fill(tx + 3, 3, DISP_W - 3 - tx - 3, 1, 1);
-    int n = items_shown(m);
-    if (n > ROWS) {
-        int h = 24 * ROWS / n, y = 8 + (24 - h) * top[depth] / (n - ROWS);
-        gfx_fill(DISP_W - 2, y, 2, h, 1);
-    }
+    int n = items_shown(m), nrow = 0;
+    s->kind = SCR_MENU;
+    s->u.menu.title = m->title;
+    s->u.menu.count = n;
+    s->u.menu.top = top[depth];
+    s->u.menu.sel = sel[depth];
+    s->u.menu.editing = editing;
     for (int r = 0; r < ROWS && top[depth] + r < n; r++) {
-        int i = top[depth] + r, y = 8 + r * 8;
-        const item_t *it = item(m, i);
-        char v[22];
-        if (it->kind == K_SUB) put_str(v, ">");
-        else if (it->kind == K_ACTION || it->kind == K_CONFIRM) v[0] = 0;
-        else value_text(it, v);
-        int w = gfx_text_width(v, &font_small);
-        gfx_text_n(2, y, it->name, (DISP_W - 8 - w) / 5, &font_small);
-        gfx_text(DISP_W - 5 - w, y, v, &font_small);
-        if (i == sel[depth]) {
-            if (editing)
-                gfx_invert(DISP_W - 6 - w, y, w + 2, 8);
-            else
-                gfx_invert(0, y, DISP_W - 3, 8);
-        }
+        const item_t *it = item(m, top[depth] + r);
+        if (it->kind == K_SUB) s->u.menu.row[r].value = ">";
+        else if (it->kind == K_ACTION || it->kind == K_CONFIRM) s->u.menu.row[r].value = "";
+        else { value_text(it, sb.u.val[r]); s->u.menu.row[r].value = sb.u.val[r]; }
+        s->u.menu.row[r].name = it->name;
+        nrow++;
     }
+    s->u.menu.nrow = nrow;
 }
 
-static void render_dialog(void)
+static void build_dialog(screen_t *s)
 {
-    switch (dialog) {
-    case DLG_CONFIRM:
-        gfx_text_center(2, confirm_item->confirm, &font_small);
-        gfx_text_center(14, "Push = Yes", &font_large);
-        break;
-    case DLG_LEARN:
-        gfx_text_center(1, "Hold a chord,", &font_small);
-        gfx_text_center(10, "then push", &font_small);
-        gfx_text_center(22, blink ? "* Learn *" : "  Learn  ", &font_small);
-        break;
-    case DLG_ABOUT: {
-        char b[24];
-        gfx_text_center(0, "My Kontrol", &font_large);
-        put_str(put_str(put_str(b, MK_VERSION), "  "), board_info.short_name);
-        gfx_text_center(16, b, &font_small);
-        gfx_text_center(24, "Open source, GPL-3.0", &font_small);
-        break;
-    }
-    case DLG_UPDATE:
-        gfx_text_center(0, "Update Mode", &font_large);
-        gfx_text_center(18, "Ready for the", &font_small);
-        gfx_text_center(25, "web installer", &font_small);
-        break;
+    s->kind = SCR_DIALOG;
+    s->u.dialog.id = dialog;            /* DLG_* line up with SCR_DLG_* */
+    s->u.dialog.blink = blink;
+    if (dialog == DLG_CONFIRM)
+        s->u.dialog.confirm = confirm_item->confirm;
+    if (dialog == DLG_ABOUT) {
+        put_str(put_str(put_str(sb.u.about, MK_VERSION), "  "), board_info.short_name);
+        s->u.dialog.about = sb.u.about;
     }
 }
 
-static void render_popup(void)
+static void build_popup(screen_t *s)
 {
     const char *title = pop_title, *value = pop_value;
-    char t[22], v[22];
     if (pop == POP_KNOB) {
         int k = pop_knob, link = app_link();
         if (link == LINK_HOST && settings.knob_mode == KNOBS_DAW) {
             title = host.knob_name[k][0] ? host.knob_name[k] : "Not mapped";
             if (host.group[k][0] && host.knob_name[k][0]) {   /* "Filter Cutoff" */
-                char *p = put_str(t, host.group[k]);
+                char *p = put_str(sb.pop_t, host.group[k]);
                 *p++ = ' ';
-                copy(p, host.knob_name[k], sizeof t - (p - t));
-                title = t;
+                copy(p, host.knob_name[k], sizeof sb.pop_t - (p - sb.pop_t));
+                title = sb.pop_t;
             }
             value = host.knob_value[k];
         } else if (link == LINK_MACKIE && settings.knob_mode == KNOBS_DAW) {
-            copy(t, &mcu_lcd[0][k * 7], 8);
-            copy(v, &mcu_lcd[1][k * 7], 8);
-            title = t;
-            value = v;
+            copy(sb.pop_t, &mcu_lcd[0][k * 7], 8);
+            copy(sb.pop_v, &mcu_lcd[1][k * 7], 8);
+            title = sb.pop_t;
+            value = sb.pop_v;
         } else {
-            char *p = put_int(put_str(t, "Knob "), k + 1, 0);
+            char *p = put_int(put_str(sb.pop_t, "Knob "), k + 1, 0);
             p = put_int(put_str(p, "  CC "), settings.knob_cc[settings.knob_page][k], 0);
-            put_int(v, app_knob_value(settings.knob_page, k), 0);
-            title = t;
-            value = v;
+            put_int(sb.pop_v, app_knob_value(settings.knob_page, k), 0);
+            title = sb.pop_t;
+            value = sb.pop_v;
         }
     }
-    gfx_fill(0, 0, DISP_W, DISP_H, 0);
-    gfx_frame(0, 0, DISP_W, DISP_H);
-    gfx_text_center(1, title, &font_small);
-    int n = 0;
-    while (value[n]) n++;
-    if (n * font_huge.w <= DISP_W - 8)
-        gfx_text_center(8, value, &font_huge);
-    else if (n * font_large.w <= DISP_W - 8)
-        gfx_text_center(11, value, &font_large);
-    else
-        gfx_text_center(16, value, &font_small);
+    s->popup.show = 1;
+    s->popup.title = title;
+    s->popup.value = value;
+}
+
+void ui_splash(void)
+{
+    screen_t s = {0};
+    s.kind = SCR_SPLASH;
+    put_str(put_str(put_str(sb.u.about, board_info.short_name), "  "), MK_VERSION);
+    s.u.splash.a = "My Kontrol";
+    s.u.splash.b = sb.u.about;
+    ui_renderer.show(&s);
 }
 
 static int screen_changed(void)
@@ -1014,35 +920,33 @@ int ui_render(void)
     if (!dirty)
         return 0;
     dirty = 0;
-    gfx_clear();
+    screen_t s = {0};
     if (dialog) {
-        render_dialog();
+        build_dialog(&s);
     } else if (depth >= 0) {
-        render_menu();
+        build_menu(&s);
     } else {
         switch (app_link()) {
         case LINK_HOST:
-            if (host.msg_id) render_host_message();
-            else if (host.list_id) render_host_list();
-            else if (host.view == VIEW_VOLUME || host.view == VIEW_PAN || host.view == VIEW_SENDS) render_host_mixer();
-            else if (host.view == VIEW_CLIPS) render_host_clips();
-            else render_host_device();
-            if (host.lost) {                /* the host went quiet: say so over the top line */
-                gfx_fill(0, 0, DISP_W, 8, 0);
-                gfx_text_center(0, "Connection lost", &font_small);
-                gfx_invert(0, 0, DISP_W, 8);
-            }
+            if (host.msg_id) build_host_message(&s);
+            else if (host.list_id) build_host_list(&s);
+            else if (host.view == VIEW_VOLUME || host.view == VIEW_PAN || host.view == VIEW_SENDS) build_host_mixer(&s);
+            else if (host.view == VIEW_CLIPS) build_clips(&s);
+            else build_host_device(&s);
+            if (host.lost)                  /* the host went quiet: say so over the top line */
+                s.lost = 1;
             break;
         case LINK_MACKIE:
-            render_mackie();
+            build_mackie(&s);
             break;
         default:
-            if (home_page == HOME_KNOBS) render_knobs();
-            else render_play();
+            if (home_page == HOME_KNOBS) build_ccpage(&s);
+            else build_play(&s);
             break;
         }
     }
     if (pop && dialog != DLG_UPDATE)
-        render_popup();
+        build_popup(&s);
+    ui_renderer.show(&s);
     return 1;
 }

@@ -14,11 +14,14 @@ BUILD  = build/$(BOARD)$(if $(DEV),-dev)
 TUSB   = lib/tinyusb/src
 
 CORE_SRCS = $(wildcard core/*.c) usb/usb_device.c
+# the renderer for this board's display (core/render.h); a board.mk may override
+# BOARD_UI_SRCS, e.g. ui/seg9.c for the S-series. Default: the 128x32 OLED.
+UI_SRCS = $(if $(BOARD_UI_SRCS),$(BOARD_UI_SRCS),ui/oled.c)
 TUSB_SRCS = $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c \
             $(TUSB)/class/dfu/dfu_rt_device.c $(TUSB)/class/midi/midi_device.c $(TUSB)/class/hid/hid_device.c \
             $(PLATFORM_TUSB_SRCS)
 SURFACE = $(BUILD)/surface_json.c
-SRCS = $(CORE_SRCS) $(BOARD_SRCS) $(PLATFORM_SRCS) $(TUSB_SRCS) $(SURFACE)
+SRCS = $(CORE_SRCS) $(UI_SRCS) $(BOARD_SRCS) $(PLATFORM_SRCS) $(TUSB_SRCS) $(SURFACE)
 
 VERSION := $(shell sed -n 's/.*MK_VERSION "\(.*\)"/\1/p' core/version.h)
 
