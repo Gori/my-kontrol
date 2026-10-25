@@ -39,7 +39,7 @@ M = 0xFFFFFFFF
 BITP = xdis.BITP
 CP, DP, SP, LR = 12, 13, 14, 15
 EEBLE, IEBLE, INENB = 1, 2, 4
-CT_END, CT_PAUSE = 1, 2
+CT_END, CT_PAUSE, CT_ACK = 1, 2, 3
 INF = float('inf')
 BURST = 16
 
@@ -1359,8 +1359,10 @@ def resource_semantics(th, insn, n, o, nxt, res):
             if pc is not None:
                 return pc
             if not th.events:
-                raise Stop('thread %d parked (%s, no events) at %s' % (
-                    th.num, n.lower(), tile.name(insn.addr)))
+                if tile.sys.stop_on_park:
+                    raise Stop('thread %d parked (%s, no events) at %s' % (
+                        th.num, n.lower(), tile.name(insn.addr)))
+                raise Block                 # parked for good; the other threads go on
             for x in th.events:
                 x.arm(th, now)
             raise Block
@@ -1432,6 +1434,49 @@ def resource_semantics(th, insn, n, o, nxt, res):
 # ---------------------------------------------------------------------------------------------
 # Tiles and the system
 
+class SwitchConfig:
+    """A node's switch registers, at chanend ID node << 16 | 0xC30C: WRITEC (0xC0) / READC
+    (0xC1), return chanend ID >> 8 (3 bytes), register (2 bytes), [value (4 bytes)], END;
+    the answer is ACK [+ value] + END, none for return 0xFFFFFF. A write to the PLL register
+    (6) resets the chip: the run stops with 'chip reset'."""
+    PLL_CTL = 6
+
+    def __init__(self, tile):
+        self.tile = tile
+        self.regs = {self.PLL_CTL: 0x0080_2B00}
+        self.pkt = []
+        self.end = Chanend(tile, tile.node << 16 | 0xC30C)
+        self.end.in_use = True
+        self.end.sink = self.sink
+
+    def sink(self, d, now):
+        self.pkt += d.pop(len(d.buf), now)        # taken as they come: a write is 11 tokens
+        if not self.pkt or self.pkt[-1] != (CT_END, True):
+            return
+        toks, self.pkt = self.pkt, []
+        if len(toks) < 7 or not toks[0][1] or toks[0][0] not in (0xC0, 0xC1):
+            raise SimError('switch 0x%x: bad config packet %s' % (self.tile.node, toks))
+        write = toks[0][0] == 0xC0
+        ret = toks[1][0] << 16 | toks[2][0] << 8 | toks[3][0]
+        reg = toks[4][0] << 8 | toks[5][0]
+        if write:
+            self.regs[reg] = toks[6][0] << 24 | toks[7][0] << 16 | toks[8][0] << 8 | toks[9][0]
+        reply = [(CT_ACK, True)]
+        if not write:
+            v = self.regs.get(reg, 0)
+            reply += [(v >> 24 & 255, False), (v >> 16 & 255, False), (v >> 8 & 255, False),
+                      (v & 255, False)]
+        reply.append((CT_END, True))
+        if ret != 0xFFFFFF:
+            r = self.tile.sys.chanend(ret << 8 | 2)
+            if r is not None:
+                r.buf.extend(reply)
+                r.notify(now)
+        if write and reg == self.PLL_CTL:
+            self.tile.sys.reset_requested = True
+            raise Stop('chip reset')
+
+
 class Tile:
     def __init__(self, sys_, name, node, image=b'', base=0x10000, size=0x10000, syms=None,
                  start=True):
@@ -1453,6 +1498,7 @@ class Tile:
         self.threads = [Thread(self, i) for i in range(8)]
         self.timers = [Timer(self, i << 8 | 1) for i in range(10)]
         self.chanends = [Chanend(self, node << 16 | i << 8 | 2) for i in range(32)]
+        self.switch = SwitchConfig(self)
         self.syncs = [Sync(self, i << 8 | 3) for i in range(8)]
         self.locks = [Lock(self, i << 8 | 5) for i in range(4)]
         self.ports = {}
@@ -1584,6 +1630,8 @@ class System:
         self.heap, self.seq = [], 0
         self.now = 0.0
         self.steps = 0
+        self.stop_on_park = False           # a thread waiting with no events ends the run
+        self.reset_requested = False        # a switch PLL write (SwitchConfig) stopped the run
         self.spin_sleep = 2000 * self.cpt   # 20 us
         self.short_wait = 1000 * self.cpt   # timer waits up to 10 us skip the scheduler when
                                             # no other thread of the tile can run before
@@ -1594,6 +1642,11 @@ class System:
         return t
 
     def chanend(self, rid):
+        if rid & 0xFFFF == 0xC30C:
+            for t in self.tiles:
+                if t.node == rid >> 16:
+                    return t.switch.end
+            return None
         if rid & 255 != 2:
             return None
         for t in self.tiles:
@@ -1703,6 +1756,7 @@ class Sim:
 
     def __init__(self, image, base=0x10000, size=0x10000, syms=None):
         self.sys = System()
+        self.sys.stop_on_park = True
         self.tile = self.sys.tile('tile', 0, image, syms)
         self.base, self.size = base, size
         self.syms = syms or {}

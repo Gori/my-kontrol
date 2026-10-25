@@ -9,7 +9,7 @@ BIN = build
 CORE = ../core
 
 all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0 $(BIN)/test_usb \
-     $(BIN)/test_seg $(BIN)/test_panel
+     $(BIN)/test_seg $(BIN)/test_panel $(BIN)/test_flash
 	$(BIN)/test_smartplay
 	$(BIN)/test_core
 	$(BIN)/test_host
@@ -18,6 +18,7 @@ all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_di
 	$(BIN)/test_usb
 	$(BIN)/test_seg
 	$(BIN)/test_panel
+	$(BIN)/test_flash
 
 $(BIN):
 	mkdir -p $@
@@ -45,6 +46,10 @@ $(BIN)/test_seg: test_seg.c ../drivers/font16.c ../drivers/st7565_seg.c ../ui/se
 # S-series panel drivers: LED chains, keybed messages and velocity, sensor MCUs, light guide
 $(BIN)/test_panel: test_panel.c ../drivers/shift595.c ../drivers/ni_keybed.c ../drivers/ni_sensor.c \
                    $(CORE)/lightguide.c | $(BIN)
+	$(CC) $(CFLAGS) -I../drivers $^ -o $@
+
+# S-series SPI flash: command sequences, protection, the guard below NI's data
+$(BIN)/test_flash: test_flash.c ../drivers/spi_flash.c | $(BIN)
 	$(CC) $(CFLAGS) -I../drivers $^ -o $@
 
 APP_SRCS = host/fake_hal.c $(filter-out $(CORE)/main.c,$(wildcard $(CORE)/*.c)) ../ui/oled.c

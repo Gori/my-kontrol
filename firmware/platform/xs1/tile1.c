@@ -7,10 +7,13 @@
    - DIN TX: 31 250 Bd 8N1 on 1J with timed port outputs; 1J is inverted like NI's firmware
      (the board's line driver inverts back).
    - DIN RX: 1L, waits for the start bit, samples each bit in its middle by port time.
+   - the flash (drivers/spi_flash.c): AT25DF081A or MX25L8006E by JEDEC ID; nothing below
+     0x55000 (NI's data) is ever erased or written; protection bits cleared around changes.
    USB is a stub so far: no enumeration, USB_STATE 0 (no host). Ports per
    docs/hardware/s-mk1.md (tile 1). */
 #include <stdint.h>
 #include "link.h"
+#include "spi_flash.h"
 #include "xs1.h"
 
 #define DIN_OUT PORT_1('J')
@@ -63,7 +66,7 @@ static void din_rx(uint32_t c)          /* c: chanend to main, one token per byt
     }
 }
 
-/* ---------- SPI flash (mode 0, MSB first, bit-banged) ---------- */
+/* ---------- SPI flash (drivers/spi_flash.c; mode 0, MSB first, bit-banged) ---------- */
 
 static uint8_t spi_byte(uint8_t out)
 {
@@ -77,66 +80,34 @@ static uint8_t spi_byte(uint8_t out)
     return in;
 }
 
-static void spi_cmd(const uint8_t *b, int n, int keep)
+static void spi_select(int on)
 {
-    xs1_out(SPI_SS, 0);
-    for (int i = 0; i < n; i++)
-        spi_byte(b[i]);
-    if (!keep)
-        xs1_out(SPI_SS, 1);
+    xs1_out(SPI_SS, !on);
 }
 
-static void spi_wait(void)
-{
-    uint8_t st;
-    do {
-        spi_cmd((const uint8_t[]){0x05}, 1, 1);       /* read status: until not busy */
-        st = spi_byte(0);
-        xs1_out(SPI_SS, 1);
-    } while (st & 1);
-}
-
-static void spi_write_enable(void)
-{
-    spi_cmd((const uint8_t[]){0x06}, 1, 0);
-    spi_cmd((const uint8_t[]){0x01, 0x00}, 2, 0);     /* status 0: no sector protection */
-    spi_wait();
-    spi_cmd((const uint8_t[]){0x06}, 1, 0);
-}
+static const spi_bus_t spi = { spi_select, spi_byte };
+static int flash_chip;
 
 static uint32_t get32(const uint8_t *p)
 {
     return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
+/* a FLASH_* request from tile 0; erases and writes below 0x55000 are refused by the driver
+   and answered with status 1 */
 static void flash_request(uint32_t link, uint8_t type, uint8_t *p, uint32_t n)
 {
     uint32_t a = get32(p);
-    uint8_t cmd[4] = {0, a >> 16, a >> 8, a};
     if (type == LINK_FLASH_READ) {
         uint32_t len = p[4];
-        cmd[0] = 0x03;
-        spi_cmd(cmd, 4, 1);
-        for (uint32_t i = 0; i < len; i++)
-            p[i] = spi_byte(0);
-        xs1_out(SPI_SS, 1);
+        spi_flash_read(&spi, a, p, len);
         link_send(link, LINK_FLASH_DATA, p, len);
         return;
     }
-    spi_write_enable();
-    if (type == LINK_FLASH_ERASE) {
-        cmd[0] = 0x20;
-        spi_cmd(cmd, 4, 0);
-    } else {
-        cmd[0] = 0x02;
-        spi_cmd(cmd, 4, 1);
-        for (uint32_t i = 4; i < n; i++)
-            spi_byte(p[i]);
-        xs1_out(SPI_SS, 1);
-    }
-    spi_wait();
-    uint8_t ok = 0;
-    link_send(link, LINK_FLASH_DONE, &ok, 1);
+    int r = type == LINK_FLASH_ERASE ? spi_flash_erase(&spi, flash_chip, a)
+                                     : spi_flash_write(&spi, flash_chip, a, p + 4, n - 4);
+    uint8_t st = r ? 1 : 0;
+    link_send(link, LINK_FLASH_DONE, &st, 1);
 }
 
 static void spi_init(void)
@@ -147,6 +118,7 @@ static void spi_init(void)
     xs1_setc(SPI_MOSI, SETC_INUSE_ON);
     xs1_out(SPI_SS, 1);
     xs1_out(SPI_CLK, 0);
+    flash_chip = spi_flash_detect(&spi);
 }
 
 /* ---------- the link ---------- */

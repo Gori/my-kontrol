@@ -36,3 +36,9 @@ enum {
 /* both tiles (platform/xs1/link.c) */
 void link_send(uint32_t c, uint8_t type, const uint8_t *p, uint32_t n);
 uint8_t link_recv(uint32_t c, uint8_t *p, uint32_t *n);   /* blocks for one packet */
+
+/* tile 0 (tile0_link.c): the raw SPI flash, by flash address; tile 1 refuses any change
+   below 0x55000 (NI's data). 0 = ok. */
+void tile0_flash_read(uint32_t spi, uint8_t *buf, uint32_t n);
+int tile0_flash_erase(uint32_t spi);
+int tile0_flash_write(uint32_t spi, const uint8_t *s, uint32_t len);

@@ -47,6 +47,13 @@ static inline uint32_t xs1_int(uint32_t c)
     return v;
 }
 static inline void xs1_outct(uint32_t c, uint32_t v) { asm volatile("outct res[%0], %1" :: "r"(c), "r"(v) : "memory"); }
+static inline uint32_t xs1_inct(uint32_t c)
+{
+    uint32_t v;
+    asm volatile("inct %0, res[%1]" : "=r"(v) : "r"(c) : "memory");
+    return v;
+}
+static inline void xs1_freer(uint32_t r) { asm volatile("freer res[%0]" :: "r"(r) : "memory"); }
 static inline void xs1_chkct(uint32_t c, uint32_t v) { asm volatile("chkct res[%0], %1" :: "r"(c), "r"(v) : "memory"); }
 
 /* the reference timer, and waiting on it with a timer resource of this thread */
@@ -138,6 +145,12 @@ static inline void xs1_clock_init(uint32_t cb, uint32_t div)
     xs1_setclk(cb, CLK_REF);
     xs1_setd(cb, div);
 }
+
+/* switch registers (sswitch.c): node = chanend ID >> 16; 0 = ok */
+int xs1_sswitch_read(uint32_t node, uint32_t reg, uint32_t *val);
+void xs1_sswitch_write_noack(uint32_t node, uint32_t reg, uint32_t val);
+uint32_t xs1_node(void);                       /* this tile's node */
+void xs1_chip_reset(void) __attribute__((noreturn));
 
 /* start fn(arg) on a new hardware thread of this tile with the given stack; 0 if none free */
 uint32_t xs1_thread_start(void (*fn)(uint32_t), uint32_t arg, uint32_t *stack, uint32_t words);

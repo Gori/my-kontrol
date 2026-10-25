@@ -10,8 +10,12 @@
                candidate: TODO confirm on a keyboard)
      7         part of the model strap (bits 7..5 at power-up, NI); ignored
      8, 9      the Control encoder's quadrature (EV_ENCODER)
-     28, 29    the page buttons (NI switches the knob page); which is left: TODO
-     the rest  TODO: unknown; their state is in board_diag for mapping on a keyboard
+     28, 29    the page buttons (NI switches the knob page); which is left: TODO. Both held
+               at power-up = the update-mode combo (panel_boot_combo)
+     the rest  TODO: unknown; their state is in board_diag for mapping on a keyboard. Still
+               to find among them: the transport (CTL_LOOP, CTL_RWD, CTL_FFW, CTL_PLAY,
+               CTL_REC, CTL_STOP), the encoder push (CTL_NAV_PUSH), CTL_BACK, CTL_ENTER,
+               Shift, Scale, Arp, the octave and preset buttons, Browse, Instance
 
    Sensor MCUs (I2C SCL 1H, SDA 1F, open drain, 400 kHz): 0x12 knob positions -> EV_KNOB,
    0x15 touch nodes -> EV_KNOB_TOUCH, CTL_ENCODER_TOUCH, EV_STRIP, and its ADC -> EV_EXPRESSION.
@@ -268,8 +272,12 @@ static void sensors(void)
 
 /* ---------- */
 
-void panel_init(void)
+static void inputs_init(void)
 {
+    static uint8_t done;
+    if (done)
+        return;
+    done = 1;
     xs1_clock_init(IN_CB, 43);          /* 100 MHz / 86 */
     xs1_setc(IN_CLK, SETC_INUSE_ON);
     xs1_setc(IN_LOAD, SETC_INUSE_ON);
@@ -281,6 +289,25 @@ void panel_init(void)
     xs1_setc(IN_CLK, SETC_CLOCKPORT);
     xs1_setclk(IN_CLK, IN_CB);
     xs1_setc(IN_CB, SETC_START);
+}
+
+/* Power-up combo: NI's firmware takes another start-up path when input byte 3 reads 0xCF,
+   bits 28 and 29 pressed and the rest of that byte released: both page buttons. Ours stops
+   in update mode then. Three reads 1 ms apart must agree. */
+int panel_boot_combo(void)
+{
+    inputs_init();
+    for (int i = 0; i < 3; i++) {
+        if ((read_registers() >> 24 & 0xFF) != 0x30)
+            return 0;
+        hal_delay_ms(1);
+    }
+    return 1;
+}
+
+void panel_init(void)
+{
+    inputs_init();
     xs1_setc(I2C_SCL, SETC_INUSE_ON);
     xs1_setc(I2C_SDA, SETC_INUSE_ON);
     (void)xs1_in(I2C_SCL);

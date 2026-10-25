@@ -25,7 +25,7 @@ void board_early_init(void)
 
 int board_boot_combo(void)
 {
-    return 0;                           /* TODO: a power-up combination for update mode */
+    return panel_boot_combo();          /* both page buttons, as NI's 0xCF path */
 }
 
 void board_init(void)

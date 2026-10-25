@@ -36,6 +36,8 @@
     { "id": 40, "name": "page_right",    "label": "PAGE ▶",    "kind": "button", "light": true },
     { "id": 44, "name": "back",          "label": "BACK",      "kind": "button", "light": true },
     { "id": 45, "name": "enter",         "label": "ENTER",     "kind": "button", "light": true },
-    { "id": 46, "name": "encoder_touch", "label": "encoder touch", "kind": "state" }
+    { "id": 46, "name": "encoder_touch", "label": "encoder touch", "kind": "state" },
+    { "id": 47, "name": "rwd",           "label": "◀◀",        "kind": "button", "light": true },
+    { "id": 48, "name": "ffw",           "label": "▶▶",        "kind": "button", "light": true }
   ]
 }

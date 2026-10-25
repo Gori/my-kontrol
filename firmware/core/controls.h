@@ -48,6 +48,8 @@ enum {
     CTL_BACK = 44,
     CTL_ENTER = 45,
     CTL_ENCODER_TOUCH = 46,  /* the 4D encoder touched / released (CAP_ENCODER_TOUCH) */
+    CTL_RWD = 47,
+    CTL_FFW = 48,
 
     CTL_COUNT = 64,
 };

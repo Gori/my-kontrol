@@ -524,14 +524,25 @@ class UartRx:
 
 
 class SpiFlash:
-    """SPI NOR flash (AT25DF081A-like), mode 0, MSB first, erased contents. Edge driven: on a
-    rising CLK edge MISO takes the next output bit, then MOSI is sampled."""
+    """SPI NOR flash, AT25DF081A-like (JEDEC 1F 45 01), mode 0, MSB first. Edge driven: on a
+    rising CLK edge MISO takes the next output bit, then MOSI is sampled.
+    Like the real chip: the status register comes up with the sector protection set (as NI's
+    firmware leaves it, 0x0C), erase/program/status writes need a write enable first, and
+    erase/program are refused while protected (counted in .refused). Below 0x55000 the
+    contents stand for NI's data (a fixed test pattern, not NI's bytes); any change there is
+    counted in .violations."""
+
+    PROTECTED_END = 0x55000
 
     def __init__(self, tile, size=1 << 20):
         self.miso, self.ss, self.clk, self.mosi = (tile.port(n) for n in ('1C', '1A', '1B', '1D'))
         for p in (self.ss, self.mosi, self.clk):
             p.listeners.append(self)
         self.mem = bytearray(b'\xff') * size
+        for a in range(0, self.PROTECTED_END, 251):
+            self.mem[a] = a * 7 & 0xFF
+        self.sr, self.wel = 0x0C, False
+        self.refused = self.violations = 0
         self.sel, self.clk_v, self.mosi_v = False, 0, 0
         self.cmd, self.nbit, self.byte, self.outq = [], 0, 0, []
         self.log = []
@@ -541,16 +552,8 @@ class SpiFlash:
         if port is self.ss:
             if lv and self.sel and self.cmd:
                 self.log.append(bytes(self.cmd[:6]))
-                c = self.cmd
-                if c[0] in (0x20, 0x52, 0xD8) and len(c) >= 4:
-                    size = {0x20: 4096, 0x52: 32768, 0xD8: 65536}[c[0]]
-                    a = (c[1] << 16 | c[2] << 8 | c[3]) & ~(size - 1)
-                    self.mem[a:a + size] = b'\xff' * size
-                elif c[0] == 0x02 and len(c) > 4:
-                    a = c[1] << 16 | c[2] << 8 | c[3]
-                    for i, x in enumerate(c[4:]):
-                        k = a & ~255 | (a + i) & 255
-                        self.mem[k] &= x
+                del self.log[:-200]
+                self.finish(self.cmd)
             if not lv and not self.sel:
                 self.cmd, self.nbit, self.byte, self.outq = [], 0, 0, []
             self.sel = not lv
@@ -567,13 +570,40 @@ class SpiFlash:
                     self.respond()
             self.clk_v = lv
 
+    def finish(self, c):
+        """At chip-select release: the command takes effect."""
+        if c[0] == 0x06:
+            self.wel = True
+            return
+        if c[0] == 0x01 and len(c) >= 2:
+            if self.wel:
+                self.sr = 0x0C if c[1] == 0x7F else 0 if c[1] == 0 else self.sr
+            self.wel = False
+            return
+        if c[0] in (0x20, 0x02) and len(c) >= 4:
+            a = c[1] << 16 | c[2] << 8 | c[3]
+            if not self.wel or self.sr & 0x0C:
+                self.refused += 1
+            elif c[0] == 0x20:
+                a &= ~4095
+                if a < self.PROTECTED_END:
+                    self.violations += 1
+                self.mem[a:a + 4096] = b'\xff' * 4096
+            else:
+                for i, x in enumerate(c[4:]):
+                    k = a & ~255 | (a + i) & 255
+                    if k < self.PROTECTED_END:
+                        self.violations += 1
+                    self.mem[k] &= x
+            self.wel = False
+
     def respond(self):
         c = self.cmd
         if len(c) == 1:
             if c[0] == 0x9F:
                 self.queue(bytes([0x1F, 0x45, 0x01]))
             elif c[0] == 0x05:
-                self.queue(bytes([0]) * 64)
+                self.queue(bytes([self.sr | (2 if self.wel else 0)]) * 64)
         if c[0] in (0x0B, 0x03) and len(c) == (5 if c[0] == 0x0B else 4):
             a = c[1] << 16 | c[2] << 8 | c[3]
             self.queue(bytes(self.mem[a:a + 256]))
@@ -594,7 +624,8 @@ class HostLink:
 
     Link contract (what our tile 0 and tile 1 firmware exchange; the real tile 1 must match):
     - Each tile allocates its link chanend first in main, so it is chanend 0 of its node:
-      LINK_TILE0 = 0x80000002, LINK_TILE1 = 0x00000002 with NI's node numbering (tile 0 is node
+      LINK_TILE0 = 0x80000002
+    PROTECTED_END = 0x55000                  # below: NI's data, never erased or written, LINK_TILE1 = 0x00000002 with NI's node numbering (tile 0 is node
       0x8000, tile 1 node 0x0000); link-time constants on both sides. Each setd's its link
       chanend to the other's.
     - Tile 1 speaks first: USB_STATE once it is up (at least 1 ms after boot, so tile 0 has
@@ -617,11 +648,13 @@ class HostLink:
       0x04 FLASH_DATA   bytes read
       0x05 FLASH_DONE   u8 0 = ok
       0x06 DEV_EVENT    developer builds: u8 type, u8 id, s16 value, given to app_event()
-    The stub: no USB host (USB_STATE 0 unless set), a 1 MB erased flash in RAM, DIN and USB
+    The stub: no USB host (USB_STATE 0 unless set), a 1 MB flash in RAM (refusing changes
+    below 0x55000 like the firmware's driver; attempts counted in .violations), DIN and USB
     traffic recorded in .din_tx and .usb_tx, input injected with din_rx() / usb_rx().
     """
     USB_MIDI_TX, DIN_TX, FLASH_READ, FLASH_ERASE, FLASH_WRITE = 0x81, 0x82, 0x83, 0x84, 0x85
     LINK_TILE0 = 0x80000002
+    PROTECTED_END = 0x55000                  # below: NI's data, never erased or written
     USB_STATE, USB_MIDI_RX, DIN_RX, FLASH_DATA, FLASH_DONE, DEV_EVENT = 1, 2, 3, 4, 5, 6
 
     def __init__(self, sys_, node=0x0000):
@@ -636,6 +669,9 @@ class HostLink:
         self.out = []                    # tokens waiting for room at the peer
         self.usb = 0
         self.flash = bytearray(b'\xff') * (1 << 20)
+        for a in range(0, self.PROTECTED_END, 251):   # stands for NI's data (a test pattern)
+            self.flash[a] = a * 7 & 0xFF
+        self.violations = 0
         self.din_tx, self.usb_tx, self.log = [], [], []
         sys_.at(sys_.cpt * 100_000, self.start)
 
@@ -673,10 +709,18 @@ class HostLink:
             self.send(self.FLASH_DATA, bytes(self.flash[a:a + n]), now)
         elif typ == self.FLASH_ERASE:
             a = struct.unpack('<I', d[:4])[0] & ~4095
+            if a < self.PROTECTED_END:          # the same guard as drivers/spi_flash.c
+                self.violations += 1
+                self.send(self.FLASH_DONE, b'\1', now)
+                return
             self.flash[a:a + 4096] = b'\xff' * 4096
             self.send(self.FLASH_DONE, b'\0', now)
         elif typ == self.FLASH_WRITE:
             a = struct.unpack('<I', d[:4])[0]
+            if a < self.PROTECTED_END:
+                self.violations += 1
+                self.send(self.FLASH_DONE, b'\1', now)
+                return
             for i, x in enumerate(d[4:]):
                 self.flash[a + i] &= x
             self.send(self.FLASH_DONE, b'\0', now)

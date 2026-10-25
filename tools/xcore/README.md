@@ -90,6 +90,13 @@ smaller than `-Os`, which matters in 64 KB per tile.
   connected: a key on DIN and USB, a knob turned on sensor 0x12, Scale on lighting the light
   guide (about 1.5 minutes: the firmware's bit-banged I2C is most of the emulated work).
 - `sim` also runs test_seg and test_panel (the display and panel drivers) in xsim.
+- `standalone` (about 2 minutes): our firmware as a standalone instrument, both tiles, no
+  USB: boot, a key and a knob on the 5-pin MIDI OUT and the displays, Scale + Arp + Clock
+  Out set in the menu, the light guide in C major, the arp on a held key, Play / Stop as
+  clock start / stop, the settings in the emulated SPI flash across a power cycle, the
+  watchdog rebooting a hung main loop, safe mode after 3 unstable starts, the page-button
+  combo giving update mode, and NI's flash area untouched. Buttons whose input bits are
+  unknown come as DEV events.
 - `emu` (opt-in, about 1 min, needs NI's image locally): boots NI's S49 firmware on the
   board model and checks the LCD init sequence, the standalone display text and that a key
   press gives a note on DIN MIDI OUT.
@@ -104,7 +111,9 @@ smaller than `-Os`, which matters in 64 KB per tile.
   lands on which physical tile is inferred, not proven.
 - Where the stage-2 loader itself sits in RAM while loading (an image that is too large could
   overwrite it) is not known; NI's largest segment is 53 988 bytes.
-- xsim: no interrupts, kernel calls, xCONNECT switch registers or ready/strobe signals;
+- xsim: no interrupts, kernel calls or ready/strobe signals; of the switch registers only
+  config reads/writes as a register file, with a PLL write (6) stopping the run as
+  `chip reset`;
   timing is per instruction (4 cycles per thread, 500 MHz), not the exact pipeline. No XS2;
   no DWARF output.
 
@@ -148,8 +157,11 @@ sides.
 - `--stdio`: commands on stdin, time moves only on `tick MS` (deterministic). `key NOTE [RAW]`,
   `keyoff`, `knob N DELTA`, `knob-set`, `btn BIT [MS]`, `btn-down/up`, `turn N`, `pedal`, `sw`, `touch`,
   `din-in HEX`, `in CABLE HEX`, `usb 0|1`, `event TYPE ID VALUE` (DEV=1 builds: an event
-  for the core over the link, like tools/mktest.py), `screen`, `leds`, `threads`, `quit`. After a tick it
-  prints `din-out <hex>` and `out <cable> <hex>` for MIDI sent; `stopped <reason>` on a crash.
+  for the core over the link, like tools/mktest.py), `screen`, `leds`, `threads`, `power` (a
+  power cycle keeping the flash and held inputs), `flash ADDR [N]`, `flash-set ADDR HEX`,
+  `hang` (stop tile 0's main thread, for the watchdog), `quit`. After a tick it prints
+  `din-out <hex>` and `out <cable> <hex>` for MIDI sent, `reset at <ms> ms` when the firmware
+  rebooted the chip (the harness restarts the board and runs on), `stopped <reason>` on a crash.
   Buttons are by input bit until the bit map is known.
 
 ```sh

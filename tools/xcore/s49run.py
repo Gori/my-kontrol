@@ -38,6 +38,12 @@ Commands (--stdio, one per line; blank lines and # comments are skipped):
                         lit light and `backlight <level>` (1O; levels 0..127, averaged over
                         the last tick), `end`
   threads               thread states of both tiles
+  power                 a power cycle: the board starts again (time from 0), keeping the flash
+                        and what is held on the panel. `tick` does the same by itself on a
+                        chip reset (the firmware's reboot), printing `reset at <ms> ms`
+  flash ADDR [N]        `flash <addr> <hex>`: N bytes (default 16) of the SPI flash at hex ADDR
+  flash-set ADDR HEX    put bytes into the SPI flash directly (a state earlier runs left)
+  hang                  tile 0's main thread stops for good (a hung main loop: the watchdog)
   quit
 Answers `error ...` for an unknown command.
 
@@ -92,14 +98,31 @@ def guide_bits(key):
 
 class Harness:
     def __init__(self, tile0, tile1=None, map0=None, map1=None):
-        syms0 = xsim.read_map(map0) if map0 else None
-        syms1 = xsim.read_map(map1) if map1 else None
-        self.b = s49emu.Board(tile0, tile1, ui_syms=syms0, usb_syms=syms1)
-        font = load_font16()
-        if font:                        # our glyphs first, NI's for the rest
-            self.b.lcd.glyph = {**s49emu.GLYPH, **font}
-        self.din_seen = self.usb_seen = 0
+        self.imgs = (tile0, tile1)
+        self.syms = (xsim.read_map(map0) if map0 else None, xsim.read_map(map1) if map1 else None)
+        self.font = load_font16()
+        self.resets = 0
         self.stopped = None
+        self.power_on()
+
+    def power_on(self, old=None):
+        """A new board running the images from the start; with `old`, the flash contents and
+        what is held on the panel carry over (a chip reset or a power cycle)."""
+        self.b = s49emu.Board(self.imgs[0], self.imgs[1], ui_syms=self.syms[0],
+                              usb_syms=self.syms[1])
+        if self.font:                   # our glyphs first, NI's for the rest
+            self.b.lcd.glyph = {**s49emu.GLYPH, **self.font}
+        if old:
+            if old.flash:
+                self.b.flash.mem[:] = old.flash.mem
+                self.b.flash.violations = old.flash.violations
+            else:
+                self.b.link.flash[:] = old.link.flash
+                self.b.link.violations = old.link.violations
+            self.b.inputs.pressed = old.inputs.pressed
+            self.b.knobs, self.b.touch = old.knobs, old.touch
+            self.b.pedal, self.b.switches = old.pedal, old.switches
+        self.din_seen = self.usb_seen = 0
         self.window()
 
     # -- time
@@ -108,12 +131,22 @@ class Harness:
             ch.reset_window(self.b.sys.now)
 
     def tick(self, ms):
+        """Run ms; a chip reset (the switch's PLL register) restarts the board and runs on."""
         self.window()
         if self.stopped:
-            return
-        why = self.b.run_ms(self.b.ms() + ms)
+            return []
+        out, end = [], self.b.ms() + ms
+        while True:
+            why = self.b.run_ms(end)
+            if why != 'chip reset':
+                break
+            out += self.midi_out() + ['reset at %.1f ms' % self.b.ms()]
+            end -= self.b.ms()
+            self.resets += 1
+            self.power_on(self.b)
         if why != 'time limit':
             self.stopped = why
+        return out
 
     def at(self, ms, fn):
         self.b.sys.at(self.b.sys.now + ms * 1e5 * self.b.sys.cpt, fn)
@@ -259,8 +292,8 @@ class Harness:
         cmd, args = a[0], a[1:]
         try:
             if cmd == 'tick':
-                self.tick(float(args[0]))
-                out = self.midi_out()
+                out = self.tick(float(args[0]))
+                out += self.midi_out()
                 return out + (['stopped ' + self.stopped] if self.stopped else [])
             if cmd == 'key':
                 self.key(int(args[0]), int(args[1]) if len(args) > 1 else 100)
@@ -305,6 +338,23 @@ class Harness:
                 return ['leds'] + self.led_lines() + ['end']
             elif cmd == 'threads':
                 return self.threads()
+            elif cmd == 'power':
+                self.stopped = None
+                self.power_on(self.b)
+            elif cmd == 'hang':
+                tl = self.b.ui
+                t = tl.threads[0]
+                if t in tl.runq:
+                    tl.runq.remove(t)
+                t.state = 'hung'
+            elif cmd == 'flash-set':
+                mem = self.b.flash.mem if self.b.flash else self.b.link.flash
+                a, data = int(args[0], 16), bytes.fromhex(''.join(args[1:]))
+                mem[a:a + len(data)] = data
+            elif cmd == 'flash':
+                a, n = int(args[0], 16), int(args[1]) if len(args) > 1 else 16
+                mem = self.b.flash.mem if self.b.flash else self.b.link.flash
+                return ['flash %05X %s' % (a, mem[a:a + n].hex(' ').upper())]
             elif cmd == 'quit':
                 raise SystemExit(0)
             else:
@@ -349,7 +399,8 @@ def main():
             for x in h.command(timed.pop(0)[1]):
                 print(x)
         step = min(10.0, a.ms - t)
-        h.tick(step)
+        for x in h.tick(step):
+            print('%8.1f ms  %s' % (h.b.ms(), x))
         t += step
         for x in h.midi_out():
             print('%8.1f ms  %s' % (h.b.ms(), x))

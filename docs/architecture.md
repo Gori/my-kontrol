@@ -54,7 +54,8 @@ Controls:
   - INSTANCE, PAGE_LEFT and PAGE_RIGHT;
   - BROWSER (BROWSE), PRESET_UP and PRESET_DOWN;
   - NAV_PUSH (the encoder push).
-- BACK, ENTER and the encoder touch get new numbers from 44 up.
+- BACK, ENTER and the encoder touch get new numbers from 44 up; Rewind and Fast forward
+  are 47 and 48.
 
 ## Screens
 
@@ -125,16 +126,25 @@ Implemented (platform/xs1, boards/s-mk1):
   optional `hal_idle()` that waits for link input or the next millisecond) and
   `tile0_link.c` in place of usb/usb_device.c and TinyUSB. Settings flash is a 4 KB RAM
   mirror written through to SPI flash on tile 1.
-- Tile 1 (`tile1.c`): the link, the 5-pin UART (TX and RX threads) and the SPI flash. USB
-  is a stub (no host).
+- Tile 1 (`tile1.c`): the link, the 5-pin UART (TX and RX threads) and the SPI flash
+  (`drivers/spi_flash.c`: AT25DF081A or MX25L8006E by JEDEC ID, the protection bits cleared
+  for each change and set again, nothing below 0x55000 ever erased or written). USB is a
+  stub (no host).
+- System (`hal.c`, `sswitch.c`): a software watchdog (the tick thread and the main loop
+  watch each other, 2 s), reboot through the switch's PLL register, a boot log in flash
+  (0xF4000: 3 starts in a row that never ran 10 s stop in safe mode), update mode as a stop
+  with a marker on the displays (DFU: TODO), both page buttons at power-up = update mode,
+  a unique ID hashed from NI's identity sector.
 - S MK1 panel (boards/s-mk1, drivers/): the keybed UART (`ni_keybed`), input registers and
   encoder (panel.c), the sensor MCUs over bit-banged I2C (`ni_sensor`), the LED chains with
   bit-angle modulation (`shift595`) and the backlight, on 6 threads of tile 0. The light guide
   colours come from `core/lightguide.c` (scale, root, held keys). Unknown wiring is in tables
-  marked TODO in panel.c and lights.c: input bits other than pedals, encoder and page buttons;
+  marked TODO in panel.c and lights.c: input bits other than pedals, encoder and page buttons
+  (so the transport, encoder push, Back and Enter have their control IDs but no bits yet);
   button and strip light bits; touch nodes; knob resolution.
 - `make BOARD=s49` builds both tile images (`build/s49/tile0.bin`, `tile1.bin`);
-  `tools/xcore/s49run.py` runs them on the board emulator.
+  `tools/xcore/s49run.py` runs them on the board emulator; `xtest.py standalone` plays a
+  whole standalone session on it (everything but USB).
 
 ## Tests
 

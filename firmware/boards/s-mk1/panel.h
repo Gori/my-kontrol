@@ -17,6 +17,7 @@ int evq_pop(evq_t *q, mk_event_t *ev);
 extern evq_t panel_events, sensor_events;
 extern uint16_t panel_dropped;
 void panel_init(void);
+int panel_boot_combo(void);        /* both page buttons held (before panel_init) */
 void panel_tick(void);              /* every 100 us */
 void sensors_start(void);
 int panel_diag(uint8_t *buf, int max);

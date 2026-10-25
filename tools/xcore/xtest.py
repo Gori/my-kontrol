@@ -14,6 +14,9 @@ s49        the S49 bring-up harness (s49run.py) on test/s49_tile0.c + s49_tile1.
            tile 0 alone with the HostLink stub: LCD text, DIN out, DIN/USB MIDI in echoed
 fw         our S49 firmware (make BOARD=s49 DEV=1) on the harness with both tiles: displays,
            a knob's CC on DIN OUT, the menu
+standalone (~2 min) the S49 firmware as a standalone instrument on the harness: 5-pin MIDI,
+           displays, Smart Play and the light guide, settings in the SPI flash across a power
+           cycle, the watchdog, safe mode after 3 unstable starts, the update-mode combo
 emu        (not in the default set, ~1 min) run NI's S49 image on the s49emu board model: LCD
            init sequence, standalone display text, a key press giving a note on DIN MIDI OUT
 """
@@ -394,6 +397,103 @@ def test_fw():
     return ok
 
 
+def test_standalone():
+    """The S49 firmware as a standalone instrument, both tiles (tile 1 with its SPI flash
+    driver on the emulated chip), no USB: boot; a key and a knob on the 5-pin MIDI OUT and the
+    displays; Scale, Arp and Clock Out on in the menu, the light guide in C major, the arp on
+    a held key; Play / Stop as MIDI clock start / stop; the settings in flash surviving a
+    power cycle; the watchdog rebooting a hung main loop; 3 starts that never got stable
+    giving safe mode, then a normal start; both page buttons at power-up giving update mode.
+    Buttons whose input bits are unknown (encoder push, Back, Play, Stop) come as DEV events."""
+    import s49run
+    r = subprocess.run(['make', '-C', FW, 'BOARD=s49', 'DEV=1', '-j8'], capture_output=True, text=True)
+    if r.returncode:
+        print('standalone: FAILED to build\n' + r.stdout[-2000:] + r.stderr[-2000:])
+        return False
+    b = os.path.join(FW, 'build', 's49-dev')
+    t0, t1 = (open(os.path.join(b, n), 'rb').read() for n in ('tile0.bin', 'tile1.bin'))
+    h = s49run.Harness(t0, t1, os.path.join(b, 'tile0.map'), os.path.join(b, 'tile1.map'))
+    fails, n = [], [0]
+
+    def run(*cmds):
+        out = []
+        for c in cmds:
+            out += h.command(c)
+        return out
+
+    def din(out, clock=False):
+        return ' '.join(x[8:] for x in out if x.startswith('din-out')).replace(' F8', '' if not clock else ' F8')
+
+    def check(what, cond, got):
+        n[0] += 1
+        if not cond:
+            fails.append('%s: %s' % (what, got))
+
+    shot = lambda: [x.split('|')[1:3] for x in h.command('screen')[1:-1]]
+    guide = lambda: {int(x.split()[1]): tuple(map(int, x.split()[2:])) for x in h.command('leds')
+                     if x.startswith('guide')}
+
+    def c_major(g):
+        roots = sorted(k for k, v in g.items() if v[2] > 100)
+        scale = sorted(k for k, v in g.items() if v[0] > 15 and v[0] == v[1] == v[2])
+        return roots == [0, 12, 24, 36, 48] and scale[:6] == [2, 4, 5, 7, 9, 11]
+
+    btn = lambda ctl: ['event 1 %d 1' % ctl, 'tick 20', 'event 1 %d 0' % ctl, 'tick 40']
+    push, back, enc = btn(25), btn(44), ['event 2 0 1', 'tick 30']
+    run('tick 1400')
+    d = shot()
+    check('home', d[0][0] == 'CH1     ' and d[1][1] == 'KONTROL ', d[:2])
+    o = din(run('key 60 100', 'tick 10', 'keyoff 60', 'tick 10', 'knob 0 640', 'tick 30'))
+    check('key and knob on 5-pin', o == '90 3C 50 80 3C 00 B0 0E 0A', o)
+    d = shot()
+    check('knob display', d[0] == ['KNOB 1  ', '10      '], d[0])
+    run(*push * 3, *enc, *push, *back, *back)                  # Scale & Chord > Scale: On
+    run(*push, *enc, *push, *push, *enc * 11, *push, *back, *back, 'tick 200')   # Arp, Clock Out
+    d = shot()
+    check('home with scale and arp', d[0][1] == 'C MAJOR ' and d[1][1] == 'ARP 1/16', d[:3])
+    o = din(run('key 60 100', 'tick 600'))
+    check('arp on a held C', o.count('90 3C 50') >= 4, o)
+    g = guide()
+    check('light guide C major', c_major(g), sorted(g.items())[:8])
+    run('keyoff 60', 'tick 100')
+    o = din(run(*btn(9), 'tick 50', *btn(11)))
+    check('Play / Stop -> clock start / stop', o == 'FA FC', o)
+    run('tick 3000')                                           # the settings get saved
+    flash = h.b.flash
+    check('settings in flash at 0xF2000', flash.mem[0xF2000:0xF2004] != b'\xff' * 4, flash.mem[0xF2000:0xF2004])
+    run('power', 'tick 1500')
+    d = shot()
+    check('settings after a power cycle', d[0][1] == 'C MAJOR ' and d[1][1] == 'ARP 1/16', d[:3])
+    check('light guide after a power cycle', c_major(guide()), '')
+    o = din(run(*btn(9)))
+    check('Clock Out after a power cycle', o == 'FA', o)
+    t = h.b.ms()
+    o = run('hang', 'tick 2600')
+    reset = [float(x.split()[2]) for x in o if x.startswith('reset at')]
+    check('watchdog reboot 2..2.5 s after a hang', len(reset) == 1 and 2000 <= reset[0] - t <= 2500, o)
+    run('tick 300')
+    log = bytes(h.b.flash.mem[0xF4000:0xF4004])
+    check('boot log: 3 starts, none stable', log == b'\xb0\xb0\xb0\xff', log.hex())
+    run('power', 'tick 300')
+    d = shot()
+    check('safe mode after 3 unstable starts', d[0] == ['SAFE    ', 'MODE    '], d[0])
+    run('power', 'tick 1400')
+    d = shot()
+    check('normal start after safe mode', d[0][0] == 'CH1     ', d[0])
+    run('btn-down 28', 'btn-down 29', 'power', 'tick 300')
+    d = shot()
+    check('both page buttons at power-up: update mode', d[0] == ['UPDATE  ', 'MODE    '], d[0])
+    fl = h.b.flash
+    check('NI flash untouched, no write refused', fl.violations == 0 and fl.refused == 0,
+          (fl.violations, fl.refused))
+    for f in fails:
+        print('standalone: FAILED ' + f)
+    print('standalone: S49 firmware, both tiles, no USB: %d of %d checks passed (boot, 5-pin key/knob, '
+          'scale + arp + light guide, clock start/stop, settings across a power cycle, watchdog, '
+          'safe mode, update combo)' % (n[0] - len(fails), n[0]))
+    return not fails
+
+
 def test_emu():
     if not os.path.exists(NI):
         print('emu: skipped (%s not present)' % os.path.relpath(NI, ROOT))
@@ -417,8 +517,8 @@ def test_emu():
 
 
 TESTS = {'roundtrip': test_roundtrip, 'core': test_core, 'image': test_image, 'sim': test_sim,
-         's49': test_s49, 'fw': test_fw, 'emu': test_emu}
-DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw']
+         's49': test_s49, 'fw': test_fw, 'standalone': test_standalone, 'emu': test_emu}
+DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw', 'standalone']
 
 
 if __name__ == '__main__':

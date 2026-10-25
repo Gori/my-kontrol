@@ -256,6 +256,10 @@ static const struct { uint8_t ctl, mcu, mcu_shift; } mcu_keys[] = {
     {CTL_NAV_LEFT,    MCU_LEFT,       MCU_BANK_LEFT},
     {CTL_NAV_RIGHT,   MCU_RIGHT,      MCU_BANK_RIGHT},
     {CTL_NAV_PUSH,    MCU_ENTER,      MCU_ENTER},
+#ifdef BOARD_SEEK_BUTTONS                               /* boards with Rewind / Fast forward */
+    {CTL_RWD,         MCU_REWIND,     MCU_REWIND},
+    {CTL_FFW,         MCU_FFWD,       MCU_FFWD},
+#endif
 };
 #define MCU_KEYS (sizeof mcu_keys / sizeof mcu_keys[0])
 static uint8_t mcu_sent[MCU_KEYS];        /* note sent on press, released on release */
@@ -941,6 +945,9 @@ static void update_lights(void)
         static const uint8_t mirror[][2] = {
             {CTL_LOOP, MCU_CYCLE}, {CTL_METRO, MCU_CLICK}, {CTL_PLAY, MCU_PLAY},
             {CTL_REC, MCU_RECORD}, {CTL_STOP, MCU_STOP},
+#ifdef BOARD_SEEK_BUTTONS
+            {CTL_RWD, MCU_REWIND}, {CTL_FFW, MCU_FFWD},
+#endif
         };
         for (unsigned i = 0; i < sizeof mirror / sizeof mirror[0]; i++) {
             uint8_t s = mcu_led[mirror[i][1]];

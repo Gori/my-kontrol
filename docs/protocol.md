@@ -246,7 +246,8 @@ Shared by every keyboard. A board sends only the IDs it has.
 
 IDs 32–63 are reserved for controls on other models: 32 Clear, 33 Mixer,
 34 Instance, 35 MIDI, 36 Setup, 37 Auto, 38 Count-in, 39 Page ←, 40 Page →,
-41 Fixed Vel, 42 Keys, 43 Chord, 44 Back, 45 Enter, 46 Encoder touch.
+41 Fixed Vel, 42 Keys, 43 Chord, 44 Back, 45 Enter, 46 Encoder touch, 47 Rewind,
+48 Fast forward.
 
 ### What the keyboard keeps
 

@@ -8,8 +8,9 @@ PLATFORM_CFLAGS = -DHAL_HAS_IDLE
 OPT = -Oz                           # 64 KB per tile for code and data: 12% smaller than -Os
 PLATFORM_INCLUDES = -Iplatform/xs1/libc
 PLATFORM_SRCS = platform/xs1/platform.c platform/xs1/hal.c platform/xs1/link.c \
-                platform/xs1/thread.c platform/xs1/rt.c
+                platform/xs1/thread.c platform/xs1/rt.c platform/xs1/sswitch.c
 PLATFORM_USB_SRCS = platform/xs1/tile0_link.c
 NO_TINYUSB = 1
 PLATFORM_RULES = 1
-TILE1_SRCS = platform/xs1/tile1.c platform/xs1/link.c platform/xs1/thread.c platform/xs1/rt.c
+TILE1_SRCS = platform/xs1/tile1.c platform/xs1/link.c platform/xs1/thread.c platform/xs1/rt.c \
+             drivers/spi_flash.c

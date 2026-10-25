@@ -134,7 +134,7 @@ Port names are per tile: 1J on tile 0 is not 1J on tile 1. The reference clock i
 - **Reading:** 32 bits, scanned every 1 ms. Inputs are active low. A 3-sample debounce is applied.
 - **Encoder:** byte 1, bits 0–1 are the Control encoder's quadrature.
 - **Model ID:** byte 0, bits 7–5, read once at power-up. Reads 7 in the emulator (all released); the real S49 value is unknown.
-- **Power-up combo:** byte 3 == 0xCF changes the start-up path. Purpose unknown.
+- **Power-up combo:** byte 3 == 0xCF changes the start-up path. Purpose unknown. 0xCF is bits 28 and 29 pressed (the page buttons, below) and the rest of byte 3 released; our firmware uses it for update mode.
 - **Bit map (E, tentative):** in the emulator, toggling single input bits with NI's firmware in standalone mode: bits 5 and 6 send CC64 and CC65; bits 28 and 29 switch the knob page (CC14–21 ⇄ CC22–29). The other 28 bits had no visible effect in that mode. Whether bits 5/6 are the pedal switches or panel buttons isn't settled; it conflicts with the guess that the pedals are on sensor 0x15 (see below).
 
 ### Lights (tile 0)
@@ -230,7 +230,7 @@ Port names are per tile: 1J on tile 0 is not 1J on tile 1. The reference clock i
   - Everything from the boot-partition size to the top is libflash's data partition, which NI never uses.
 - **Our firmware:**
   - Must never write 0x0–0x54FFF, so restoring NI's firmware gives back an untouched keyboard (like the M32 rule).
-  - Keeps its settings at **0xF0000** (in the unused region; confirmed clear of NI's areas).
+  - Keeps its settings at **0xF0000** (in the unused region; confirmed clear of NI's areas), 4 sectors, and its boot log in the sector at 0xF4000.
 - **Write protection:** NI leaves the chip's status-register protection bits set after a write. Our flash driver must clear them before writing and may set them again after.
 
 ## Stock USB

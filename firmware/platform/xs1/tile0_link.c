@@ -15,6 +15,8 @@
 #include "usb.h"
 #include "xs1.h"
 
+void xs1_link_up(void);
+
 static uint32_t link;
 static uint8_t up, mounted;
 static uint8_t pkt[LINK_MAX];
@@ -96,44 +98,66 @@ static void put32(uint8_t *b, uint32_t v)
     b[0] = v, b[1] = v >> 8, b[2] = v >> 16, b[3] = v >> 24;
 }
 
+/* raw SPI flash through tile 1 (link.h); tile 1 refuses changes below 0x55000 */
+void tile0_flash_read(uint32_t spi, uint8_t *buf, uint32_t n)
+{
+    while (n) {
+        uint32_t k = n < 128 ? n : 128;
+        uint8_t q[5];
+        put32(q, spi);
+        q[4] = (uint8_t)k;
+        request(LINK_FLASH_READ, q, 5, LINK_FLASH_DATA, buf, k);
+        spi += k, buf += k, n -= k;
+    }
+}
+
+int tile0_flash_erase(uint32_t spi)
+{
+    uint8_t q[4], r = 1;
+    put32(q, spi);
+    request(LINK_FLASH_ERASE, q, 4, LINK_FLASH_DONE, &r, 1);
+    return r;
+}
+
+int tile0_flash_write(uint32_t spi, const uint8_t *s, uint32_t len)
+{
+    while (len) {
+        uint32_t n = 256 - (spi & 255);                /* within one SPI page */
+        if (n > 200) n = 200;
+        if (n > len) n = len;
+        uint8_t q[4 + 200], r = 1;
+        put32(q, spi);
+        memcpy(q + 4, s, n);
+        request(LINK_FLASH_WRITE, q, 4 + n, LINK_FLASH_DONE, &r, 1);
+        if (r)
+            return r;
+        spi += n, s += n, len -= n;
+    }
+    return 0;
+}
+
 static void flash_load(void)
 {
-    for (uint32_t off = 0; off < sizeof xs1_flash_mirror; off += 128) {
-        uint8_t q[5];
-        put32(q, spi_addr((uintptr_t)xs1_flash_mirror + off));
-        q[4] = 128;
-        request(LINK_FLASH_READ, q, 5, LINK_FLASH_DATA, xs1_flash_mirror + off, 128);
-    }
+    for (uint32_t page = 0; page < 4; page++)
+        tile0_flash_read(spi_addr((uintptr_t)xs1_flash_mirror + page * FLASH_PAGE),
+                         xs1_flash_mirror + page * FLASH_PAGE, FLASH_PAGE);
 }
 
 int hal_flash_erase(uintptr_t addr)
 {
-    uint8_t q[4], r = 1;
     uintptr_t page = addr & ~(uintptr_t)(FLASH_PAGE - 1);
-    put32(q, spi_addr(page));
-    request(LINK_FLASH_ERASE, q, 4, LINK_FLASH_DONE, &r, 1);
+    int r = tile0_flash_erase(spi_addr(page));
     memset((void *)page, 0xFF, FLASH_PAGE);
     return r;
 }
 
 int hal_flash_write(uintptr_t addr, const void *src, uint32_t len)
 {
-    const uint8_t *s = src;
-    while (len) {
-        uint32_t a = spi_addr(addr), n = 256 - (a & 255);   /* within one SPI page */
-        if (n > 200) n = 200;
-        if (n > len) n = len;
-        uint8_t q[4 + 200], r = 1;
-        put32(q, a);
-        memcpy(q + 4, s, n);
-        request(LINK_FLASH_WRITE, q, 4 + n, LINK_FLASH_DONE, &r, 1);
-        if (r)
-            return r;
-        for (uint32_t i = 0; i < n; i++)
-            ((uint8_t *)addr)[i] &= s[i];
-        addr += n, s += n, len -= n;
-    }
-    return 0;
+    int r = tile0_flash_write(spi_addr(addr), src, len);
+    if (!r)
+        for (uint32_t i = 0; i < len; i++)
+            ((uint8_t *)addr)[i] &= ((const uint8_t *)src)[i];
+    return r;
 }
 
 void usb_init(void)
@@ -144,6 +168,7 @@ void usb_init(void)
         handle(type, pkt, n);
     }
     flash_load();
+    xs1_link_up();                  /* hal.c: the crash counter (may stop here), the ID */
     din_last_ms = hal_ms();
 }
 
