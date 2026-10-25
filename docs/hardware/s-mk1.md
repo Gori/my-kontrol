@@ -16,7 +16,6 @@ Read in full:
 - **KB**: the article above.
 
 Not found anywhere in NI's documents:
-- the power supply rating;
 - dimensions;
 - release notes for the MK1 firmware.
 
@@ -98,7 +97,7 @@ Pedals (KB):
 - NI lists two TRS half-damper pedals, but doesn't say which MK1 input or revision supports them. CE 301 says continuous sustain needs an S88 revision 3.
 
 Power:
-- The supply comes in the box (M 12). Its rating isn't in NI's documents.
+- The supply comes in the box (M 12). The rear panel says **15 V DC, 1.2 A** (T: label on an S49).
 - Without USB, the keyboard runs from the supply and sends on 5-pin MIDI, on channel 1 by default (M 86, CE 268).
 - NI's standalone mode needs firmware 52 or later (CE 267). NI's firmware keeps one template on the keyboard ("Set as Standalone Default", CE 269).
 
@@ -271,7 +270,6 @@ Image format:
 
 - Bit map of the 32 button inputs.
 - Each of the 16 character segments, lit one at a time. Full glyphs read correctly (T); single segments weren't tested.
-- The power supply rating: read it from the supply's label.
 - What the 0x12 chip is, and its 9th value.
 - The touch-point map of 0x15: 8 knobs, the encoder and the 2 strips.
 - What the 2 extra light values in report 0x80 drive.
