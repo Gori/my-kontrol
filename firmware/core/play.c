@@ -127,6 +127,11 @@ int play_keys_down(void)
     return n;
 }
 
+int play_key_down(int key)
+{
+    return key >= 0 && key < BOARD_KEYS && key_down[key];
+}
+
 uint8_t play_channel(void)
 {
     return zone_ch[ZONE_UPPER];

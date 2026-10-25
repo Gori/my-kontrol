@@ -124,6 +124,15 @@ int sp_set_external_scale(int r, uint16_t mask, const char *name)
 const char *sp_scale_name(void) { return scale()->name; }
 int sp_scale_root(void) { return root(); }
 
+uint16_t sp_scale_mask(void)
+{
+    const sp_scale_t *s = scale();
+    uint16_t m = 0;
+    for (int k = 0; k < s->len; k++)
+        m |= (uint16_t)(1u << s->steps[k]);
+    return m;
+}
+
 /* Snap to the nearest scale note; ties go down. */
 static int quantize(int note)
 {

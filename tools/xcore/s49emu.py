@@ -66,8 +66,11 @@ ROW2 = [(2, 3), (3, 3), (4, 2), (4, 0), (3, 0), (2, 0), (0, 0), (1, 3), (1, 2), 
         (1, 1), (4, 1), (1, 0), (2, 1), (3, 1)]
 ROW2_LAST = [(0, 3), (1, 3), (3, 3), (3, 0), (2, 0), (1, 0), (0, 0), (0, 2), (1, 2), (2, 2),
              (2, 3), (0, 1), (3, 2), (1, 1), (2, 1), (3, 1)]
-# row 0 bits 0/1 of cell c: page-B byte offsets within the 40-byte block of a display slot
-ICON = [(7, 6), (11, 9), (4, 12), (1, 2), (24, 39), (26, 27), (29, 37), (36, 34)]
+# row 0 (docs/hardware/s-mk1.md, tested): the meter's 9 blocks, 9 thin lines and box, as
+# page-B byte offsets within the 40-byte block of a display slot (bit 0)
+METER_BLOCK = [7, 11, 4, 1, 24, 26, 29, 36, 32]
+METER_LINE = [6, 9, 12, 2, 39, 27, 37, 34, 31]
+METER_BOX = 14
 
 
 class LCD:
@@ -140,11 +143,12 @@ class LCD:
         return r[0x24:0x24 + 120] + r[15 * 256 + 0x24:15 * 256 + 0x24 + 120]
 
     def cells(self, d):
-        """Display d (0..8): (row-1 cells, row-2 cells, row-1 dots, row-2 dots, icon bits)."""
+        """Display d (0..8): (row-1 cells, row-2 cells, row-1 dots, row-2 dots, meter bits:
+        box, 9 blocks, 9 lines)."""
         c, s = d // 3, d % 3
         buf = self.buffer(c)
         bit = lambda off, b: buf[off] >> b & 1
-        r1, r2, d1, d2, icons = [], [], [], [], []
+        r1, r2, d1, d2 = [], [], [], []
         for p in range(8):
             q = 8 * s + p
             base = 5 * q
@@ -153,16 +157,16 @@ class LCD:
                 r2.append(sum(bit(base + o, b) << i for i, (o, b) in enumerate(ROW2)))
             else:
                 r2.append(sum(bit(base + 1 + o, b) << i for i, (o, b) in enumerate(ROW2_LAST)))
-            O = 40 * s
-            d1.append(bit(5 * q + 4, 3) if p <= 6 else bit(120 + 32 + O, 0))
+            d1.append(bit(5 * q + 4, 3) if p <= 6 else 0)
             if p <= 5:
                 d2.append(bit(5 * q + 5, 1))
             elif p == 6:
                 d2.append(bit(5 * q + 5, 0))
             else:
-                d2.append(bit(120 + 31 + O, 0))
-            icons += [bit(120 + O + ICON[p][0], 0), bit(120 + O + ICON[p][1], 0)]
-        icons.append(bit(120 + 40 * s + 14, 0))
+                d2.append(0)
+        O = 120 + 40 * s
+        icons = [bit(O + METER_BOX, 0)] + [bit(O + x, 0) for x in METER_BLOCK] + \
+                [bit(O + x, 0) for x in METER_LINE]
         return r1, r2, d1, d2, icons
 
     def text(self, d):
@@ -174,7 +178,12 @@ class LCD:
             for v, dot in zip(cells, dots):
                 s += glyph.get(v, '?') + ('.' if dot else '')
             return s
-        return line(r1, d1), line(r2, d2), ''.join('#' if i else '-' for i in icons)
+        box, blocks, lines = icons[0], icons[1:10], icons[10:]
+        if not (box or any(blocks) or any(lines)):
+            meter = ' ' * 11
+        else:
+            meter = ('[' if box else ' ') + ''.join('#' if b_ else '_' if l_ else ' ' for b_, l_ in zip(blocks, lines)) + (']' if box else ' ')
+        return line(r1, d1), line(r2, d2), meter
 
     def unknown(self, d):
         r1, r2 = self.cells(d)[:2]
@@ -240,6 +249,35 @@ class Chain:
         self.account(t)
         span = t - self.t0
         return [round(127 * x / span) if span else 0 for x in self.on_time]
+
+
+class Duty:
+    """The fraction of time a 1-bit output is high (PWM), since reset_window()."""
+
+    def __init__(self, port):
+        port.listeners.append(self)
+        self.level, self.t_last, self.t0, self.high = 0, 0.0, 0.0, 0.0
+
+    def port_out(self, port, v, n, t, period):
+        self.account(t)
+        self.level = v >> (port.width * (n - 1)) & 1
+
+    def port_release(self, port, t):
+        pass
+
+    def account(self, t):
+        if t > self.t_last:
+            if self.level:
+                self.high += t - self.t_last
+            self.t_last = t
+
+    def reset_window(self, t):
+        self.account(t)
+        self.high, self.t0 = 0.0, t
+
+    def brightness(self, t):
+        self.account(t)
+        return round(127 * self.high / (t - self.t0)) if t > self.t0 else 0
 
 
 class Inputs:
@@ -693,6 +731,7 @@ class Board:
                        Chain('B light guide 2', ui.port('1J'), ui.port('1L'), 80),
                        Chain('C buttons/strips', ui.port('1M'), ui.port('1N'), 112)]
         self.inputs = Inputs(ui)
+        self.backlight = Duty(ui.port('1O'))
         self.knobs = [0] * 9
         self.touch = [0] * 48
         self.pedal, self.switches = 0, 0
@@ -760,7 +799,7 @@ def report(b, show_log=True):
                   % (c, ', '.join('%.2f' % ms(b, t) for t in lcd.resets) or '-', init,
                      lcd.refreshes[c], ', '.join('%.0f' % ms(b, t) for t in lcd.refresh_t[c][:6]),
                      lcd.data_bytes[c]))
-    print('displays (line 1 | line 2 | 17 icon segments):')
+    print('displays (line 1 | line 2 | meter):')
     for d, l1, l2, icons in b.displays():
         print('  %d  [%-8s] [%-8s]  %s' % (d + 1, l1, l2, icons))
         unk = lcd.unknown(d)

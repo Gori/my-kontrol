@@ -18,9 +18,12 @@ static const uint8_t line2_last_map[16][2] = {
     {0, 3}, {1, 3}, {3, 3}, {3, 0}, {2, 0}, {1, 0}, {0, 0}, {0, 2},
     {1, 2}, {2, 2}, {2, 3}, {0, 1}, {3, 2}, {1, 1}, {2, 1}, {3, 1},
 };
-/* the 17 bar segments: page-B bytes (RAM 120 + 40s + n, bit 0); where each sits on the
-   glass is not known yet, so the bar fills them in this order */
-static const uint8_t bar_map[17] = {7, 6, 11, 9, 4, 12, 1, 2, 24, 39, 26, 27, 29, 37, 36, 34, 14};
+/* Row 0 of a display (docs/hardware/s-mk1.md, tested): the meter is 9 positions, each a
+   block and a thin line, in a box. Page-B byte offsets (RAM 120 + 40s + n, bit 0) of the
+   blocks and lines of positions 1..9, and of the box. */
+static const uint8_t meter_block[9] = {7, 11, 4, 1, 24, 26, 29, 36, 32};
+static const uint8_t meter_line[9] = {6, 9, 12, 2, 39, 27, 37, 34, 31};
+#define METER_BOX 14
 
 static void set(uint8_t *ram, int byte, int bit)
 {
@@ -43,19 +46,22 @@ static void encode_display(uint8_t *ram, int s, const seg_display_t *d)
                     set(ram, base + 1 + line2_last_map[b][0], line2_last_map[b][1]);
             }
         }
-        if (d->dots[0] >> p & 1) {
-            if (p < 7) set(ram, base + 4, 3);
-            else set(ram, page_b + 32, 0);
-        }
-        if (d->dots[1] >> p & 1) {
-            if (p < 6) set(ram, base + 5, 1);
-            else if (p == 6) set(ram, base + 5, 0);
-            else set(ram, page_b + 31, 0);
+        if (p < 7 && d->dots[0] >> p & 1)       /* no dot after the 8th character */
+            set(ram, base + 4, 3);
+        if (p < 6 && d->dots[1] >> p & 1)
+            set(ram, base + 5, 1);
+        if (p == 6 && d->dots[1] >> p & 1)
+            set(ram, base + 5, 0);
+    }
+    if (d->meter) {                             /* the box, the line, n blocks */
+        int n = (d->meter * 9 + 254) / 255;     /* 1..255 shows at least one */
+        set(ram, page_b + METER_BOX, 0);
+        for (int i = 0; i < 9; i++) {
+            set(ram, page_b + meter_line[i], 0);
+            if (i < n)
+                set(ram, page_b + meter_block[i], 0);
         }
     }
-    int lit = (d->meter * 17 + 254) / 255;          /* 1..255 lights at least one */
-    for (int i = 0; i < lit; i++)
-        set(ram, page_b + bar_map[i], 0);
 }
 
 void st7565_seg_encode(st7565_seg_ram_t ram, const seg_display_t d[9])

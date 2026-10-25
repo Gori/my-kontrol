@@ -218,7 +218,12 @@ class Timer(EvRes):
         self.owner = t
         d = self.delay(now)
         if d:
-            self.tile.sys.wake_at(now + d, t)
+            tile, sys_ = self.tile, self.tile.sys
+            if len(tile.runq) == 1 and d <= sys_.short_wait and \
+                    (not sys_.heap or sys_.heap[0][0] > now + d):
+                tile.time = now + d          # nothing else can run meanwhile: just let time pass
+                return int(tile.time // sys_.cpt) & M
+            sys_.wake_at(now + d, t)
             raise Block
         return int(now // self.tile.sys.cpt) & M
 
@@ -1580,6 +1585,8 @@ class System:
         self.now = 0.0
         self.steps = 0
         self.spin_sleep = 2000 * self.cpt   # 20 us
+        self.short_wait = 1000 * self.cpt   # timer waits up to 10 us skip the scheduler when
+                                            # no other thread of the tile can run before
 
     def tile(self, name, node, image, syms=None, start=True):
         t = Tile(self, name, node, image, syms=syms, start=start)

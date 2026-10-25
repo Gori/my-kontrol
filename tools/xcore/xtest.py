@@ -22,7 +22,7 @@ import glob, os, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
-import xdis, xas
+import xdis, xas, xcc
 
 NI = os.path.join(ROOT, 'fw', 'kks', 's49_xmos_120.bin')
 FW = os.path.join(ROOT, 'firmware')
@@ -104,7 +104,9 @@ def cc(src, tag='', inc=()):
     """clang --target=xcore -S; returns the .s path under BUILD."""
     os.makedirs(BUILD, exist_ok=True)
     out = os.path.join(BUILD, tag + os.path.splitext(os.path.basename(src))[0] + '.s')
-    subprocess.run([CLANG] + CFLAGS + ['-I' + i for i in inc] + ['-S', src, '-o', out], check=True)
+    r = xcc.compile_asm(src, CFLAGS[1:] + ['-I' + i for i in inc], out)   # (xcc adds --target)
+    if r:
+        raise subprocess.CalledProcessError(r, [CLANG, src])
     return out
 
 
@@ -255,7 +257,7 @@ def run_sim(name, files):
     sim = xsim.Sim(r.image, syms={n: a for a, n, o in r.symbols()})
     old, sys.stdout = sys.stdout, open(os.devnull, 'w')
     try:
-        why = sim.run()
+        why = sim.run(200_000_000)
     finally:
         sys.stdout = old
     return why, ''.join(sim.out), sim
@@ -273,12 +275,17 @@ def test_sim():
     t = os.path.join(FW, 'test')
     tinc = [os.path.join(t, 'host'), os.path.join(FW, 'core'), os.path.join(FW, 'usb')]
     core = lambda *n: [os.path.join(FW, 'core', x + '.c') for x in n]
+    drv = lambda *n: [os.path.join(FW, 'drivers', x + '.c') for x in n]
     progs = [('prog', [os.path.join(TEST, 'prog.c')], []),
              ('test_smartplay', [os.path.join(t, 'test_smartplay.c')] + core('smartplay'), tinc),
              ('test_core', [os.path.join(t, 'test_core.c'), os.path.join(t, 'host', 'fake_hal.c')]
               + core('midi', 'play', 'smartplay', 'settings', 'settings_store'), tinc),
              ('test_host', [os.path.join(t, 'test_host.c'), os.path.join(t, 'host', 'fake_hal.c')]
-              + core('host', 'mcu', 'midi'), tinc)]
+              + core('host', 'mcu', 'midi'), tinc),
+             ('test_seg', [os.path.join(t, 'test_seg.c')] + drv('font16', 'st7565_seg')
+              + [os.path.join(FW, 'ui', 'seg9.c')], tinc + [os.path.join(FW, 'drivers')]),
+             ('test_panel', [os.path.join(t, 'test_panel.c')] + drv('shift595', 'ni_keybed', 'ni_sensor')
+              + core('lightguide'), tinc + [os.path.join(FW, 'drivers')])]
     rt = runtime() + [os.path.join(TEST, 'simrt.s'), cc(os.path.join(TEST, 'simlib.c'), '', inc)]
     for name, srcs, sinc in progs:
         files = rt + [cc(f, name + '_', inc + sinc) for f in srcs]
@@ -322,7 +329,7 @@ def test_s49():
             want += ['din-out 90 3C 40', 'out 0 B0 01 7F']
         out += h.command('tick 2')
         scr = h.command('screen')
-        leds = h.command('leds')[1:-1]
+        leds = [x for x in h.command('leds')[1:-1] if not x.startswith('backlight')]
         want_leds = ['guide 0 127 0 0', 'led 3 127']
         disp = [x.split('|')[1:3] for x in scr[1:-1]]
         good = out == want and disp[0] == ['MY      ', 'KONTROL '] and disp[8] == ['        ', 'XS1 S49 '] \
@@ -336,23 +343,25 @@ def test_s49():
 
 def test_fw():
     """Our S49 firmware (make BOARD=s49 DEV=1) on the harness with both of its tiles: splash,
-    home screen, the CC page, a knob's CC on the 5-pin MIDI OUT, the menu."""
+    home screen, the CC page, a knob's CC on the 5-pin MIDI OUT, the menu; then with the
+    HostLink stub (USB connected): a key on DIN and USB, a knob on the sensor, Scale on in the
+    menu lighting the light guide."""
     import s49run
     r = subprocess.run(['make', '-C', FW, 'BOARD=s49', 'DEV=1', '-j8'], capture_output=True, text=True)
     if r.returncode:
         print('fw: FAILED to build\n' + r.stdout[-2000:] + r.stderr[-2000:])
         return False
     b = os.path.join(FW, 'build', 's49-dev')
-    h = s49run.Harness(open(os.path.join(b, 'tile0.bin'), 'rb').read(), open(os.path.join(b, 'tile1.bin'), 'rb').read(),
-                       os.path.join(b, 'tile0.map'), os.path.join(b, 'tile1.map'))
+    t0, t1 = (open(os.path.join(b, n), 'rb').read() for n in ('tile0.bin', 'tile1.bin'))
+    h = s49run.Harness(t0, t1, os.path.join(b, 'tile0.map'), os.path.join(b, 'tile1.map'))
     shot = lambda: [x.split('|')[1:3] for x in h.command('screen')[1:-1]]
+    push = ['event 1 25 1', 'tick 20', 'event 1 25 0', 'tick 40']
     steps = [('tick 100', None), ('screen', lambda d: d[0] == ['MY      ', 'KONTROL ']),
              ('tick 1300', None), ('screen', lambda d: d[0][0] == 'CH1     ' and d[1][1] == 'KONTROL '),
-             ('event 2 0 1', None), ('tick 30', None),
+             ('turn 1', None), ('tick 30', None),
              ('screen', lambda d: d[0] == ['KNOBS   ', 'PAGE 1  '] and d[1] == ['CC14    ', '       0']),
-             ('event 3 0 40', None), ('tick 30', None),
-             ('event 1 25 1', None), ('tick 20', None), ('event 1 25 0', None), ('tick 2000', None),
-             ('screen', lambda d: d[0][0] == 'MENU    ' and d[1][0].startswith('>'))]
+             ('event 3 0 40', None), ('tick 30', None)] + [(c, None) for c in push] + \
+            [('tick 2000', None), ('screen', lambda d: d[0][0] == 'MENU    ' and d[1][0].startswith('>'))]
     ok, din = True, []
     for cmd, check in steps:
         if check is None:
@@ -363,10 +372,25 @@ def test_fw():
                 ok = False
                 print('fw: after %r the displays were %s' % (cmd, d))
     ok &= din == ['din-out B0 0E 28']
+    # tile 0 alone, USB connected through the stub
+    h = s49run.Harness(t0)
+    out = []
+    for c in ['tick 1400', 'usb 1', 'tick 20', 'key 60 100', 'tick 10', 'keyoff 60', 'tick 10',
+              'knob 0 640', 'tick 30']:
+        out += [x for x in h.command(c) if not x.startswith('out 1')]
+    want = ['din-out 90 3C 50', 'out 0 90 3C 50', 'din-out 80 3C 00', 'out 0 80 3C 00',
+            'din-out B0 0E 0A', 'out 0 B0 0E 0A']
+    ok &= out == want
+    for c in ['tick 2000'] + push * 3 + ['event 2 0 1', 'tick 30'] + push + ['event 1 44 1', 'tick 20',
+              'event 1 44 0', 'tick 50']:
+        h.command(c)
+    guide = {int(x.split()[1]): tuple(map(int, x.split()[2:])) for x in h.command('leds') if x.startswith('guide')}
+    c_keys = [k for k, v in guide.items() if v[2] > 100]
+    scale = sorted(k for k, v in guide.items() if v == (24, 24, 24))
+    ok &= c_keys == [0, 12, 24, 36, 48] and scale[:6] == [2, 4, 5, 7, 9, 11]
     print('fw: S49 firmware (tile 0 %d B, tile 1 %d B) in the harness: splash, home, CC page, '
-          'menu %s; knob 1 -> %s' % (os.path.getsize(os.path.join(b, 'tile0.bin')),
-                                    os.path.getsize(os.path.join(b, 'tile1.bin')),
-                                    'ok' if ok else 'DIFFERENT', din))
+          'menu %s; knob 1 -> %s; stub with USB: %s; light guide in C major: roots %s, scale %s...'
+          % (len(t0), len(t1), 'ok' if ok else 'DIFFERENT', din, out, c_keys, scale[:7]))
     return ok
 
 

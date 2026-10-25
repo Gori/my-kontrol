@@ -16,6 +16,7 @@ void play_settings_changed(void);  /* releases notes on a channel or split chang
 void play_panic(void);             /* everything off, including CC 123 on the channels in use */
 uint8_t play_channel(void);        /* main (upper zone) channel currently in use */
 int play_keys_down(void);
+int play_key_down(int key);        /* 1 while that key is held */
 
 extern uint8_t play_last_note, play_last_velocity;
 extern uint16_t play_note_gen;     /* increments on every played note-on */

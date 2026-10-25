@@ -1,7 +1,7 @@
 #pragma once
 /* ST7565-family controllers driving 16-segment glass, as on the Komplete Kontrol S MK1:
    3 controllers, 3 displays each, every display 2 lines of 8 characters with a dot after
-   each character and 17 extra segments (the bar). Layout: docs/hardware/s-mk1.md,
+   characters 1-7 and a meter of 9 blocks (each with a thin line) in a box. Layout: docs/hardware/s-mk1.md,
    Displays (from fw/kks/notes/xmos.md §11).
 
    The driver has no pins: the board passes its bus operations. encode() is pure, so the
@@ -22,6 +22,6 @@ typedef struct {
 typedef uint8_t st7565_seg_ram_t[ST7565_SEG_CTRLS][ST7565_SEG_BYTES];
 
 void st7565_seg_init(const st7565_bus_t *bus);             /* reset, configure, display on */
-/* the RAM image of 9 displays: characters through font16, dots, bars of 17 segments */
+/* the RAM image of 9 displays: characters through font16, dots, meters */
 void st7565_seg_encode(st7565_seg_ram_t ram, const seg_display_t d[9]);
 void st7565_seg_send(const st7565_bus_t *bus, const st7565_seg_ram_t ram);

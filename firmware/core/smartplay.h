@@ -76,6 +76,7 @@ int sp_held_count(void);               /* keys physically down */
 int sp_set_external_scale(int root, uint16_t mask, const char *name);
 const char *sp_scale_name(void);       /* the scale in use */
 int sp_scale_root(void);
+uint16_t sp_scale_mask(void);          /* bit n: root + n semitones is in the scale in use */
 
 /* chord learning: notes of all keys down when sp_learn_chord is called */
 int sp_learn_chord(void);              /* 0 if at least two notes were held */

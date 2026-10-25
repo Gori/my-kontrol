@@ -66,7 +66,7 @@ static int claim(const seg_display_t d[9], int id)
 }
 
 /* every segment of every character, every dot and every bar segment of the 9 displays
-   lands on its own RAM bit: 9 x (2 x 8 x 16 + 16 + 17) = 4905 bits, no two shared */
+   lands on its own RAM bit: 9 x (2 x 8 x 16 + 14 dots + 19 meter) = 2601 bits, none shared */
 static void test_map_unique(void)
 {
     seg_display_t d[9];
@@ -93,22 +93,32 @@ static void test_map_unique(void)
                 total += n;
             }
         for (int k = 0; k < 16; k++) {
+            if (k % 8 == 7)
+                continue;                              /* no dot after the 8th character */
             id++;
             blank(d);
             d[disp].dots[k / 8] = 1 << (k % 8);
             CHECK(claim(d, id) == 1, "display %d dot %d", disp, k);
             total++;
         }
-        for (int k = 1; k <= 17; k++) {
-            id++;
+        id++;
+        blank(d);
+        d[disp].meter = 255;                           /* box, 9 lines, 9 blocks */
+        CHECK(claim(d, id) == 19, "display %d full meter", disp);
+        total += 19;
+        for (int k = 1; k <= 9; k++) {
             blank(d);
-            d[disp].meter = (uint8_t)(k * 255 / 17);
-            int n = claim(d, id);                      /* the bar up to k: k bits, the new one ours */
-            CHECK(n == k || n == -1, "display %d bar %d lights %d", disp, k, n);
-            total++;
+            d[disp].meter = (uint8_t)(k * 255 / 9);
+            st7565_seg_encode(ram, d);
+            int n = 0;
+            for (int c = 0; c < 3; c++)
+                for (int i = 0; i < 240; i++)
+                    for (int b = 0; b < 8; b++)
+                        n += ram[c][i] >> b & 1;
+            CHECK(n == 10 + k, "display %d meter %d/9 lights %d", disp, k, n);
         }
     }
-    CHECK(total == 9 * (256 + 16 + 17), "%d features", total);
+    CHECK(total == 9 * (256 + 14 + 19), "%d features", total);
 }
 
 /* spot checks against docs/hardware/s-mk1.md / xmos.md §11.3 */
@@ -128,9 +138,13 @@ static void test_map_spots(void)
     CHECK(ram[1][base + 1] == 1 && ram[1][base + 2] == 1, "last line-2 '_' (got %02x %02x)",
           ram[1][base + 1], ram[1][base + 2]);
     d[4].line[1][7] = ' ';
-    d[8].dots[0] = 0x80;                    /* line-1 dot of char 7, slot 2: page B 32 + 80 */
+    d[8].dots[0] = 0x40;                    /* line-1 dot of char 6, slot 2: 5(16+6)+4 bit 3 */
     st7565_seg_encode(ram, d);
-    CHECK(ram[2][120 + 80 + 32] == 1, "line-1 dot of char 7");
+    CHECK(ram[2][5 * 22 + 4] == 8, "line-1 dot of char 7");
+    d[8].dots[0] = 0;
+    d[8].meter = 255;                       /* position 9's block: page B 32 + 80 (tested) */
+    st7565_seg_encode(ram, d);
+    CHECK(ram[2][120 + 80 + 32] == 1 && ram[2][120 + 80 + 14] == 1, "meter position 9, box");
 }
 
 /* ---------- renderer ---------- */
@@ -163,7 +177,7 @@ static void test_ccpage(void)
     CHECK(line_is(0, 0, "Knobs   ") && line_is(0, 1, "Page 2  "), "title on display 1");
     CHECK(line_is(1, 0, "CC14    ") && line_is(1, 1, "       0"), "knob 1");
     CHECK(line_is(8, 0, "CC21    ") && line_is(8, 1, "     126"), "knob 8");
-    CHECK(shown[1].meter == 0 && shown[8].meter == 253, "bars follow the values (%d %d)",
+    CHECK(shown[1].meter == 0 && shown[8].meter == 253, "meters follow the values (%d %d)",
           shown[1].meter, shown[8].meter);
 }
 

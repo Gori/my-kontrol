@@ -8,7 +8,8 @@
 #define BOARD_BASE_NOTE  36      /* lowest key C2 */
 #define BOARD_MIDI_DIN   1       /* 5-pin MIDI In and Out (on tile 1) */
 #define BOARD_SEG_DISPLAYS 9     /* ui/seg9.c: 9 displays, 2 lines of 8 characters */
-#define BOARD_GUIDE_KEYS 49      /* light guide: one RGB light per key */
+#define BOARD_GUIDE_KEYS 49      /* light guide: one RGB light per key (core/lightguide.c) */
+#define BOARD_DIN_EXT_QUEUE 512  /* EXT -> 5-pin queue (core/midi.c), small: tile 0 RAM */
 /* the pixel framebuffer (core/gfx.c) is not used on this board */
 #define DISP_W           128
 #define DISP_H           32

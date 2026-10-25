@@ -8,6 +8,7 @@
 #include "gfx.h"
 #include "host.h"
 #include "kbd.h"
+#include "lightguide.h"
 #include "mcu.h"
 #include "midi.h"
 #include "play.h"
@@ -1064,6 +1065,9 @@ void app_poll(void)
     play_tick_ms(dt);
 #if BOARD_MIDI_DIN
     midi_din_tick_ms(dt);
+#endif
+#ifdef BOARD_GUIDE_KEYS
+    lightguide_tick_ms(dt);
 #endif
     ui_tick_ms(dt);
     host_tick_ms(dt);

@@ -6,8 +6,10 @@
 enum { RES_PORT = 0, RES_TIMER = 1, RES_CHANEND = 2, RES_THREAD = 4 };
 enum {
     SETC_INUSE_ON = 0x8, SETC_COND_FULL = 0x1, SETC_COND_AFTER = 0x9, SETC_COND_EQ = 0x11,
-    SETC_INVERT = 0x600f,
+    SETC_INVERT = 0x600f, SETC_BUFFERS = 0x200f, SETC_CLOCKPORT = 0x500f, SETC_START = 0xf,
 };
+#define CLKBLK(n) ((uint32_t)(n) << 8 | 6)
+#define CLK_REF 1                   /* setclk source: the 100 MHz reference clock */
 enum { CT_END = 1 };
 
 /* port IDs: width << 16 | index << 8 (XS1_PORT_1A = 0x10000 ... XS1_PORT_4A = 0x40000) */
@@ -20,6 +22,9 @@ enum { CT_END = 1 };
 #define xs1_getr(type) ({ uint32_t r_; asm volatile("getr %0, %1" : "=r"(r_) : "n"(type)); r_; })
 static inline void xs1_setc(uint32_t r, uint32_t v) { asm volatile("setc res[%0], %1" :: "r"(r), "r"(v)); }
 static inline void xs1_setd(uint32_t r, uint32_t v) { asm volatile("setd res[%0], %1" :: "r"(r), "r"(v)); }
+static inline void xs1_setclk(uint32_t r, uint32_t src) { asm volatile("setclk res[%0], %1" :: "r"(r), "r"(src)); }
+static inline void xs1_settw(uint32_t p, uint32_t w) { asm volatile("settw res[%0], %1" :: "r"(p), "r"(w)); }
+static inline void xs1_syncr(uint32_t p) { asm volatile("syncr res[%0]" :: "r"(p) : "memory"); }
 static inline void xs1_setpt(uint32_t p, uint32_t t) { asm volatile("setpt res[%0], %1" :: "r"(p), "r"(t)); }
 static inline uint32_t xs1_getts(uint32_t p)
 {
@@ -124,6 +129,14 @@ static inline int xs1_wait_chan_until(uint32_t c, uint32_t tmr, uint32_t t)
         "setc res[%2], 1\n"
         : "=&r"(r) : "r"(c), "r"(tmr), "r"(t) : "r11", "memory");
     return r;
+}
+
+/* a clock block dividing the reference clock: 100 MHz / (2 * div); attach ports, then start */
+static inline void xs1_clock_init(uint32_t cb, uint32_t div)
+{
+    xs1_setc(cb, SETC_INUSE_ON);
+    xs1_setclk(cb, CLK_REF);
+    xs1_setd(cb, div);
 }
 
 /* start fn(arg) on a new hardware thread of this tile with the given stack; 0 if none free */

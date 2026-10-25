@@ -10,7 +10,7 @@ which emits assembly but has no assembler or object writer; the rest is here.
 | `xas.py` | assembler: clang's XS1 assembly → relocatable object (JSON) |
 | `xld.py` | linker: objects → one tile RAM image + map; gc of unreferenced `.cc_top` blocks; picks every instruction size (relaxation) |
 | `ximage.py` | `--check` validates any xflash upgrade image (header, segment table, CRCs, padding); rebuilds NI's image locally. Our images come from XMOS's xflash |
-| `xcc.py` | cc-style driver (`-c` = clang -S + xas) so the firmware Makefile builds XS1 objects |
+| `xcc.py` | cc-style driver (`-c`: clang to IR, the stack-alignment fix below, llc, xas) so the firmware Makefile builds XS1 objects |
 | `xsim.py` | XS1 simulator: tiles, 8 hardware threads each, timers, ports, clock blocks, channels (also between tiles), locks, synchronisers, events |
 | `s49run.py` | bring-up harness for our S49 firmware: runs our tile images, shows displays and lights, injects input, captures MIDI; `--stdio` for scripted tests |
 | `s49emu.py` | Komplete Kontrol S49 MK1 board: both tiles plus LCD controllers, LED chains, input registers, I²C sensor MCUs, keybed UART, DIN MIDI, SPI flash |
@@ -61,8 +61,13 @@ $(OUT).bin: $(BUILD)/tile0.bin $(BUILD)/tile1.bin
 ```
 (`TILEn_OBJS` include `$(BUILD)/xs1/platform/xs1/rt.o`; `tile.ld` adds `crt0.s`.)
 `xld.py` also takes `.s` files directly. `-g` works (debug sections are dropped).
-Use `-Os` or `-O1`..`-O3`: at `-O0` LLVM's XCore backend miscompiles byte-sized stack
-variables (two locals at `sp[1]`, seen in test_smartplay), nothing to do with these tools.
+LLVM's XCore backend miscompiles stack objects aligned below 4 bytes (a char array, a byte
+whose address is taken): their frame offset is divided by 4 for `ldaw r, sp[n]` and the
+remainder dropped, so two of them can overlap. Seen at `-O0` in the host tests and at `-Oz`
+with two `uint8_t[10]` buffers. `xcc.py` (and xtest) work around it: C goes to LLVM IR, every
+`alloca` gets an alignment of at least 4, then `llc`. With that, `-O0` to `-O3`, `-Os` and
+`-Oz` all pass the simulator tests. The firmware builds with `-Oz` (platform.mk): 12 %
+smaller than `-Os`, which matters in 64 KB per tile.
 
 ## Tests: `python3 tools/xcore/xtest.py [roundtrip|core|image|sim]`
 
@@ -81,7 +86,10 @@ variables (two locals at `sp[1]`, seen in test_smartplay), nothing to do with th
 - `s49`: builds `test/s49_tile0.c` + `test/s49_tile1.c` (a minimal LCD/LED driver and both
   sides of the tile link) and runs them in the harness, with both tiles and with tile 0 alone.
 - `fw`: `make BOARD=s49 DEV=1` (our firmware), then the harness with both tiles: splash,
-  home screen, CC page, a knob's CC on DIN OUT, the menu.
+  home screen, CC page, a knob's CC on DIN OUT, the menu; then with the HostLink stub and USB
+  connected: a key on DIN and USB, a knob turned on sensor 0x12, Scale on lighting the light
+  guide (about 1.5 minutes: the firmware's bit-banged I2C is most of the emulated work).
+- `sim` also runs test_seg and test_panel (the display and panel drivers) in xsim.
 - `emu` (opt-in, about 1 min, needs NI's image locally): boots NI's S49 firmware on the
   board model and checks the LCD init sequence, the standalone display text and that a key
   press gives a note on DIN MIDI OUT.
@@ -138,7 +146,7 @@ sides.
   the 17 extra segments, 2 lines of 8 characters), the light guide as one letter per key
   (R G B Y M C W, capital = bright), the button/strip chain as a level per bit.
 - `--stdio`: commands on stdin, time moves only on `tick MS` (deterministic). `key NOTE [RAW]`,
-  `keyoff`, `knob N DELTA`, `knob-set`, `btn BIT [MS]`, `btn-down/up`, `pedal`, `sw`, `touch`,
+  `keyoff`, `knob N DELTA`, `knob-set`, `btn BIT [MS]`, `btn-down/up`, `turn N`, `pedal`, `sw`, `touch`,
   `din-in HEX`, `in CABLE HEX`, `usb 0|1`, `event TYPE ID VALUE` (DEV=1 builds: an event
   for the core over the link, like tools/mktest.py), `screen`, `leds`, `threads`, `quit`. After a tick it
   prints `din-out <hex>` and `out <cable> <hex>` for MIDI sent; `stopped <reason>` on a crash.

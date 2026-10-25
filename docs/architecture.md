@@ -127,6 +127,12 @@ Implemented (platform/xs1, boards/s-mk1):
   mirror written through to SPI flash on tile 1.
 - Tile 1 (`tile1.c`): the link, the 5-pin UART (TX and RX threads) and the SPI flash. USB
   is a stub (no host).
+- S MK1 panel (boards/s-mk1, drivers/): the keybed UART (`ni_keybed`), input registers and
+  encoder (panel.c), the sensor MCUs over bit-banged I2C (`ni_sensor`), the LED chains with
+  bit-angle modulation (`shift595`) and the backlight, on 6 threads of tile 0. The light guide
+  colours come from `core/lightguide.c` (scale, root, held keys). Unknown wiring is in tables
+  marked TODO in panel.c and lights.c: input bits other than pedals, encoder and page buttons;
+  button and strip light bits; touch nodes; knob resolution.
 - `make BOARD=s49` builds both tile images (`build/s49/tile0.bin`, `tile1.bin`);
   `tools/xcore/s49run.py` runs them on the board emulator.
 

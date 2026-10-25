@@ -34,7 +34,8 @@ SRCS = $(CORE_SRCS) $(UI_SRCS) $(BOARD_SRCS) $(PLATFORM_SRCS) $(TUSB_SRCS) $(SUR
 
 VERSION := $(shell sed -n 's/.*MK_VERSION "\(.*\)"/\1/p' core/version.h)
 
-CFLAGS = $(PLATFORM_CFLAGS) -Os -g -std=gnu11 \
+OPT ?= -Os                          # a platform.mk may pick another, e.g. -Oz
+CFLAGS = $(PLATFORM_CFLAGS) $(OPT) -g -std=gnu11 \
          -Wall -Wextra -Wno-missing-field-initializers -ffreestanding -fno-builtin \
          -ffunction-sections -fdata-sections \
          -Icore -Iusb -Iui -Idrivers $(BOARD_INCLUDES) -Iplatform/$(PLATFORM) $(PLATFORM_INCLUDES) -I$(TUSB) \

@@ -86,8 +86,8 @@ int board_serial(char *out, int max);   /* USB serial to report, or 0 to use the
 #define SEG_CHARS 8
 typedef struct {
     char line[2][SEG_CHARS];   /* ' ' = blank; a character the font lacks shows blank */
-    uint8_t dots[2];           /* bit c: the dot after character c of that line */
-    uint8_t meter;             /* the bar above the text: 0 = off .. 255 = full */
+    uint8_t dots[2];           /* bit c: the dot after character c (0..6; the 8th has none) */
+    uint8_t meter;             /* the bar above the text: 0 = off, 1..255 = 1..9 blocks */
 } seg_display_t;
 void board_seg_show(const seg_display_t *d);   /* BOARD_SEG_DISPLAYS displays: draw them */
 

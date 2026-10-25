@@ -23,6 +23,7 @@ Commands (--stdio, one per line; blank lines and # comments are skipped):
   knob-set N VALUE      sensor 0x12 value N = VALUE
   btn BIT [MS]          input-register bit 0..31 pressed for MS ms (default 100)
   btn-down BIT / btn-up BIT
+  turn N                the Control encoder N detents (+ = clockwise), on input bits 8/9
   pedal VALUE           sensor 0x15 ADC value (expression pedal, guess)
   sw N 0|1              sensor 0x15 switch input N (0, 1: sustain tip/ring, guess)
   touch NODE VALUE      sensor 0x15 touch delta NODE 0..47 (knobs, encoder, strips)
@@ -34,14 +35,14 @@ Commands (--stdio, one per line; blank lines and # comments are skipped):
                         (the link's DEV_EVENT, like tools/mktest.py over USB)
   screen                `screen`, 9 lines `<display> <bar> |<line 1>|<line 2>|`, `end`
   leds                  `leds`, then `guide <key> <r> <g> <b>` and `led <bit> <level>` for every
-                        lit light (levels 0..127, averaged over the last tick), `end`
+                        lit light and `backlight <level>` (1O; levels 0..127, averaged over
+                        the last tick), `end`
   threads               thread states of both tiles
   quit
 Answers `error ...` for an unknown command.
 
-Display lines: a '.' after a character is that character's dot. The bar is the 17 extra
-segments of the display in RAM order (their position on the glass is not known yet), 2 per
-character: '#' both, '+' one, ' ' none.
+Display lines: a '.' after a character is that character's dot. The meter is shown as
+[#####____]: the box, 9 blocks ('#') and the thin line under unlit ones ('_').
 Light guide: key k is chain A (keys 0..23) or B (24..48), 3 bits per key; the bit order inside
 each 24-bit group is the one NI's firmware uses (xmos.md §8.3).
 """
@@ -103,7 +104,7 @@ class Harness:
 
     # -- time
     def window(self):
-        for ch in self.b.chains:
+        for ch in self.b.chains + [self.b.backlight]:
             ch.reset_window(self.b.sys.now)
 
     def tick(self, ms):
@@ -144,6 +145,22 @@ class Harness:
             d.notify(self.b.sys.now)
         inject()
 
+    def turn(self, detents, bits=(8, 9), ms=2.0):
+        """Turn the Control encoder: its quadrature on input bits 8/9, one state every ms
+        (4 states a detent, as our board decodes it)."""
+        seq = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        step = 1 if detents > 0 else -1
+        st = getattr(self, 'enc_state', 0)
+        for i in range(abs(detents) * 4):
+            st = (st + step) % 4
+            a, b = seq[st]
+
+            def apply(a=a, b=b):
+                inp = self.b.inputs
+                inp.pressed = inp.pressed & ~(3 << bits[0]) | a << bits[0] | b << bits[1]
+            self.at(ms * (i + 1), apply)
+        self.enc_state = st
+
     def din_in(self, data):
         if self.b.link:
             self.b.link.din_rx(data)
@@ -173,12 +190,8 @@ class Harness:
         """[(bar, line 1, line 2)] for displays 1..9."""
         out = []
         for d in range(9):
-            l1, l2, icons = self.b.lcd.text(d)
-            bar = ''
-            for i in range(0, 17, 2):
-                pair = icons[i:i + 2]
-                bar += '#' if pair == '##' else ('+' if '#' in pair else ' ')
-            out.append((bar, l1, l2))
+            l1, l2, meter = self.b.lcd.text(d)
+            out.append((meter, l1, l2))
         return out
 
     def guide(self):
@@ -199,6 +212,7 @@ class Harness:
         guide, chain_c = self.guide()
         lines = ['guide %d %d %d %d' % ((k,) + rgb) for k, rgb in enumerate(guide) if any(rgb)]
         lines += ['led %d %d' % (i, v) for i, v in enumerate(chain_c) if v]
+        lines.append('backlight %d' % self.b.backlight.brightness(self.b.sys.now))
         return lines
 
     def grid(self):
@@ -206,7 +220,7 @@ class Harness:
         disp = self.displays()
         w = max(13, max(len(x) for d in disp for x in d[1:]) + 2)
         rows = ['   ' + ''.join(('%d' % (i + 1)).ljust(w) for i in range(9)),
-                '   ' + ''.join(('[%s]' % d[0]).ljust(w) for d in disp),
+                '   ' + ''.join(d[0].ljust(w) for d in disp),
                 '   ' + ''.join(d[1].ljust(w) for d in disp),
                 '   ' + ''.join(d[2].ljust(w) for d in disp)]
         guide, chain_c = self.guide()
@@ -220,8 +234,9 @@ class Harness:
                     (1, 0, 1): 'm', (0, 1, 1): 'c', (1, 1, 1): 'w'}[(r * 2 >= m, g * 2 >= m, b * 2 >= m)]
             keys += name.upper() if m >= 64 else name
         rows.append('   light guide (keys 1..49, R G B Y M C W, capital = bright): ' + keys)
-        rows.append('   button/strip lights (chain bits 0..111): |%s|'
-                    % ''.join(RAMP[min(9, v * 10 // 128)] for v in chain_c))
+        rows.append('   button/strip lights (chain bits 0..111): |%s|  backlight %d'
+                    % (''.join(RAMP[min(9, v * 10 // 128)] for v in chain_c),
+                       self.b.backlight.brightness(self.b.sys.now)))
         rows.append('   t = %.1f ms%s' % (self.b.ms(), ('  STOPPED: ' + self.stopped) if self.stopped else ''))
         return rows
 
@@ -260,6 +275,8 @@ class Harness:
                 bit, ms = int(args[0]), float(args[1]) if len(args) > 1 else 100
                 self.button(bit, True)
                 self.at(ms, lambda: self.button(bit, False))
+            elif cmd == 'turn':
+                self.turn(int(args[0]))
             elif cmd in ('btn-down', 'btn-up'):
                 self.button(int(args[0]), cmd == 'btn-down')
             elif cmd == 'pedal':

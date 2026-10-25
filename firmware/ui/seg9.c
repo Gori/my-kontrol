@@ -12,12 +12,14 @@
    - clips:        display 1 row / column name; displays 2..9 one column each: the cursor
                    row and the row below, '>' marking the cursor
    - menu, list:   display 1 title / position; displays 2..9 the selected row (line 1)
-                   and the next one (line 2); a menu value being edited shows as [value]
+                   and the next one (line 2); a menu value being edited shows as [value],
+                   or with a '*' row mark when that does not fit display 9
    - message:      2 lines of the flowed text from the scroll position (clamped here)
    - dialogs:      the text on the two lines
    - lost:         "CONNECTION LOST" over line 1 of displays 1-2
    - popup:        title on line 1 and value on line 2 of displays 1-2, last
-   A '.' after a character lights that character's dot instead of taking a cell. */
+   A '.' after a character lights that character's dot instead of taking a cell (the 8th
+   character of a display has no dot: it takes a cell there). */
 #include "render.h"
 
 #define NDISP 9
@@ -39,7 +41,7 @@ static int width(const char *s, int n)
 {
     int w = 0;
     for (int i = 0; i < n && s && s[i]; i++)
-        if (!(s[i] == '.' && i > 0 && s[i - 1] != '.'))
+        if (!(s[i] == '.' && i > 0 && s[i - 1] != '.' && w % SEG_CHARS))
             w++;
     return w;
 }
@@ -51,7 +53,7 @@ static void put_n(int line, int col, int end, const char *s, int n)
         return;
     int first = col;
     for (int i = 0; i < n && s[i]; i++) {
-        if (s[i] == '.' && i > 0 && s[i - 1] != '.' && col > first) {
+        if (s[i] == '.' && i > 0 && s[i - 1] != '.' && col > first && (col - 1) % SEG_CHARS < 7) {
             f[(col - 1) / SEG_CHARS].dots[line] |= 1 << ((col - 1) % SEG_CHARS);
             continue;
         }
@@ -274,6 +276,8 @@ static void draw_clips(const screen_t *s)
 static void row(int line, char mark, const char *name, const char *value, int bracket)
 {
     char b[48], *p = b;
+    if (bracket && width(value, 255) + 2 > SEG_CHARS)
+        mark = '*', bracket = 0;           /* too long for [ ]: mark the row instead */
     *p++ = mark;
     for (const char *q = name; q && *q && p < b + 46; ) *p++ = *q++;
     *p = 0;
@@ -345,7 +349,7 @@ static void draw_message(const screen_t *sc)
     for (int l = 0; s[i] && l < *scroll + 2; l++)
         i += flow(l >= *scroll ? l - *scroll : -1, 0, NDISP - 1, s + i, 4096, &more);
     if (sc->u.message.busy_dot)
-        f[NDISP - 1].dots[0] |= 0x80;
+        f[NDISP - 1].dots[0] |= 0x40;          /* the last dot of the last display */
 }
 
 static void draw_dialog(const screen_t *s)

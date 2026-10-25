@@ -12,7 +12,8 @@
 #define HALF_BIT 50                     /* ticks: 500 ns high, 500 ns low */
 
 static uint32_t tmr, v4b = 1, t;
-static st7565_seg_ram_t ram, sent;
+static st7565_seg_ram_t ram;
+static seg_display_t last[9];
 static int have_sent;
 
 static void bus_select(uint8_t ctrls, int data)
@@ -57,11 +58,11 @@ void display_init(void)
 
 void display_show(const seg_display_t *d)
 {
-    st7565_seg_encode(ram, d);
-    if (have_sent && !memcmp(ram, sent, sizeof ram))
+    if (have_sent && !memcmp(d, last, sizeof last))
         return;                         /* 6 ms on the bus: only when something changed */
+    memcpy(last, d, sizeof last);
+    have_sent = 1;
+    st7565_seg_encode(ram, d);
     t = xs1_time(tmr);
     st7565_seg_send(&bus, (const uint8_t (*)[ST7565_SEG_BYTES])ram);
-    memcpy(sent, ram, sizeof ram);
-    have_sent = 1;
 }
