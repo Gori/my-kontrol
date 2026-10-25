@@ -218,8 +218,20 @@ Port names are per tile: 1J on tile 0 is not 1J on tile 1. The reference clock i
 ### Flash (tile 1)
 
 - **Ports:** MISO 1C, SS 1A, CLK 1B, MOSI 1D.
-- **Layout:** XMOS libflash: boot loader, then a factory image, then upgrade images.
-- **Not yet confirmed:** the offsets, and whether a factory image is present.
+- **Layout (F; flash byte addresses in a 1 MB chip):**
+  - 0x0: boot loader (word 0 = its size in words, then the loader, then a CRC).
+  - 0x0C: the boot-partition size word (read at run time; 0 = whole flash). Not known statically.
+  - `4·n + 8`: the factory image (NI fw 0x14, confirmed present by the revert test).
+  - Next sector after it: the upgrade image, at most 0x20000. With the factory image ~0x17200, the upgrade area ends below ~0x40000.
+  - NI's own data (outside libflash, each with an A and B copy, erased in 4 KB sectors):
+    - 0x4C000 / 0x4D000: identity/calibration (word 0 = 0x13500100 + a magic).
+    - 0x4E000 / 0x4F000: NI's settings.
+    - 0x50000 / 0x54000: the MIDI template store (2780 B).
+  - Everything from the boot-partition size to the top is libflash's data partition, which NI never uses.
+- **Our firmware:**
+  - Must never write 0x0–0x54FFF, so restoring NI's firmware gives back an untouched keyboard (like the M32 rule).
+  - Keeps its settings at **0xF0000** (in the unused region; confirmed clear of NI's areas).
+- **Write protection:** NI leaves the chip's status-register protection bits set after a write. Our flash driver must clear them before writing and may set them again after.
 
 ## Stock USB
 
@@ -276,5 +288,5 @@ Image format:
 - What the 2 extra light values in report 0x80 drive.
 - Aftertouch source.
 - Pedal wiring, and how sustain polarity is detected.
-- Flash layout offsets, and the power-up combo (byte 3 == 0xCF).
+- The boot-partition-size word at flash 0x0C (only readable at run time), and the power-up combo (byte 3 == 0xCF).
 - The other models: key ranges, the S88 keybed, and the S88 revisions.
