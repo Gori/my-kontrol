@@ -6,6 +6,7 @@ Sources:
 - **KB**: NI support article "List of Compatible Pedals with Komplete Kontrol MK1 / MK2 Keyboards".
 - **S**: NI's MK1 controller scripts, installed with Maschine 2 (`Scripts/Maschine/KompleteKontrolS`). They give NI's names for the controls and lights.
 - **F**: stock firmware 1.2.0 (XMOS image and SAMD image from NI's updater), static analysis.
+- **E**: NI's firmware run in our emulator (`tools/xcore/s49emu.py`), watching the modelled hardware. Tentative: the emulator isn't the silicon.
 - **T**: tested on an S49.
 
 No tag: not confirmed.
@@ -132,9 +133,9 @@ Port names are per tile: 1J on tile 0 is not 1J on tile 1. The reference clock i
 - **Pins:** clock 1B (1.163 MHz), load 1C (active low), data 1A.
 - **Reading:** 32 bits, scanned every 1 ms. Inputs are active low. A 3-sample debounce is applied.
 - **Encoder:** byte 1, bits 0–1 are the Control encoder's quadrature.
-- **Model ID:** byte 0, bits 7–5, read once at power-up.
+- **Model ID:** byte 0, bits 7–5, read once at power-up. Reads 7 in the emulator (all released); the real S49 value is unknown.
 - **Power-up combo:** byte 3 == 0xCF changes the start-up path. Purpose unknown.
-- **Bit map per button:** not yet known.
+- **Bit map (E, tentative):** in the emulator, toggling single input bits with NI's firmware in standalone mode: bits 5 and 6 send CC64 and CC65; bits 28 and 29 switch the knob page (CC14–21 ⇄ CC22–29). The other 28 bits had no visible effect in that mode. Whether bits 5/6 are the pedal switches or panel buttons isn't settled; it conflicts with the guess that the pedals are on sensor 0x15 (see below).
 
 ### Lights (tile 0)
 
