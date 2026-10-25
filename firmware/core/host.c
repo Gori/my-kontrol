@@ -221,7 +221,7 @@ static uint16_t u14(const uint8_t *d) { return d[0] << 7 | d[1]; }
 static void ident(void)
 {
     uint8_t id[24] = {host.proto >= 2 ? 2 : 1, board_info.id, MK_VERSION_MAJOR, MK_VERSION_MINOR,
-                      MK_VERSION_PATCH, board_info.keys, board_info.knobs, board_info.caps, host.view};
+                      MK_VERSION_PATCH, board_info.keys, board_info.knobs, board_info.caps & 0x0F, host.view};
     int n = 9;
     if (host.proto >= 2) {
         id[n++] = MIDI_SYSEX_MAX >> 7;

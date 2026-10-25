@@ -58,12 +58,12 @@ timing. The core never sees a pin.
   - Map your matrix positions to `CTL_*`.
   - Missing controls: append IDs from 32 up in `controls.h`. Never renumber them, because the host protocol uses the numbers.
 - **Keybed:** `BOARD_KEYS` and `board_info.base_note`.
-  - S-series keybeds have aftertouch. Add an event type for it; the core can grow.
+  - Aftertouch: set `CAP_AFTERTOUCH` and send `EV_AFTERTOUCH` (0..127). An expression pedal: `CAP_EXPRESSION` and `EV_EXPRESSION` (0..16383).
 - **Display:**
   - The UI is laid out for 128×32 monochrome (M32, A-series).
   - The S-series colour screens need a new renderer behind the same UI model in `core/ui.c`. Open an issue before starting, so we can plan it together.
 - **5-pin MIDI:** set `BOARD_MIDI_DIN 1` in `board_config.h`, send the UART (31250 baud) what `midi_din_tx_byte()` hands out, and pass received bytes to `midi_din_rx_byte()`, both from the main loop; the USB descriptor gets a third cable, "My Kontrol MIDI". `BOARD_DIN_EXT_QUEUE` (default 2048 bytes) buffers what the computer sends to the jacks.
-- **Lights:** `board_light` gets a logical control and a level 0..255. RGB key lights (Light Guide) would be a new `board_key_light` call.
+- **Lights:** `board_light` gets a logical control and a level 0..255. RGB key lights (Light Guide): `CAP_LIGHT_GUIDE`, `board_key_light` and `board_key_lights_flush`. Lights beside the strips: `CAP_STRIP_LEDS` and `board_strip_leds`. The core calls these only when the cap is set, so a board without it leaves them out.
 - **Surface description:**
   - `surface.json` tells a DAW what the keyboard has: controls and their labels, knobs, strips, screen, lights and keys. It follows [`surface.schema.json`](surface.schema.json).
   - The keyboard sends it in answer to `DESCRIBE` ([host protocol](protocol.md)), so a DAW that implements the protocol supports a new model without changes.

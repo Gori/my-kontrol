@@ -45,6 +45,9 @@ enum {
     CTL_FIXED_VEL = 41,
     CTL_KEYS = 42,
     CTL_CHORD = 43,
+    CTL_BACK = 44,
+    CTL_ENTER = 45,
+    CTL_ENCODER_TOUCH = 46,  /* the 4D encoder touched / released (CAP_ENCODER_TOUCH) */
 
     CTL_COUNT = 64,
 };

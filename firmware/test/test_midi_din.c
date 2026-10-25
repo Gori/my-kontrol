@@ -8,6 +8,7 @@
 #include "midi.h"
 #include "settings.h"
 #include "smartplay.h"
+#include "ui.h"
 
 static int failures;
 static const char *current;
@@ -512,6 +513,36 @@ static void test_thru_clock(void)
     SENT(PORT_DIN, 0xF8, 0xFC);
 }
 
+/* ---------- S-series inputs and buttons ---------- */
+
+static void test_aftertouch_expression(void)
+{
+    setup();
+    settings.midi_out = MIDI_OUT_DIN;
+    settle();
+    mk_event_t at = {EV_AFTERTOUCH, 0, 30}, ex = {EV_EXPRESSION, 0, 16383};
+    app_event(&at);
+    app_event(&ex);
+    SENT(PORT_DIN, 0xD0, 30, 0xB0, 11, 127);
+    NOTHING(PORT_KEYS);
+}
+
+static void test_back_enter(void)
+{
+    setup();
+    mk_event_t e = {EV_BUTTON, CTL_NAV_PUSH, 1};
+    app_event(&e);
+    e.value = 0;
+    app_event(&e);
+    CHECK(ui_menu_open(), "menu open");
+    mk_event_t enter = {EV_BUTTON, CTL_ENTER, 1}, back = {EV_BUTTON, CTL_BACK, 1};
+    app_event(&enter);                           /* into Scale & Chord */
+    app_event(&back);
+    CHECK(ui_menu_open(), "Back: up one level");
+    app_event(&back);
+    CHECK(!ui_menu_open(), "Back again: closed");
+}
+
 #else   /* the M32: no 5-pin */
 
 static void test_no_din(void)
@@ -552,6 +583,8 @@ int main(void)
     RUN(test_merge_during_sysex);
     RUN(test_sysex_queue_full);
     RUN(test_thru_clock);
+    RUN(test_aftertouch_expression);
+    RUN(test_back_enter);
 #else
     RUN(test_no_din);
 #endif

@@ -155,6 +155,7 @@ Open the menu with 4D push, or with Browser (Shift + Browser in host mode).
 - Push to change a value; turning then edits it, and pushing again finishes.
 - On/off settings flip at a push.
 - 4D left goes back.
+- On keyboards with Back and Enter buttons, those work too.
 
 **Scale & Chord**
 
@@ -185,6 +186,7 @@ Open the menu with 4D push, or with Browser (Shift + Browser in host mode).
 | Channel, Octave, Transpose | |
 | Velocity | soft, linear, hard, fixed; Fixed Vel sets the value |
 | Split, Split At, Lower Ch, Lower Oct | keys below the split point play on their own channel and octave, without Smart Play |
+| Aftertouch | keyboards with aftertouch: on (sends channel pressure), off |
 | All Notes Off | |
 
 **Controls**
@@ -192,6 +194,7 @@ Open the menu with 4D push, or with Browser (Shift + Browser in host mode).
 - Knob Page and Knob 1-8 CC.
 - Knobs in DAW: DAW, or MIDI CC to keep the knobs on CCs even when a DAW is connected.
 - Mod Strip CC, Pedal Tip CC, Pedal Ring CC.
+- Expression CC: keyboards with an expression pedal input; 11 to start with.
 
 **Presets**: 8 slots holding all settings. Pick a slot, then Load or Save.
 

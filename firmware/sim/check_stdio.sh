@@ -64,6 +64,26 @@ tick 400
 quit
 EOF
 )
+# the M32 has no aftertouch or expression pedal: their settings stay hidden
+menu=$("$sim" --stdio --fake-time <<'EOF'
+tick 1300
+event 1 25 1
+event 1 25 0
+event 2 0 2
+event 1 25 1
+event 1 25 0
+event 2 0 20
+find All Notes Off
+find Aftertouch
+event 1 22 1
+event 2 0 1
+event 1 25 1
+event 2 0 30
+find Pedal Ring CC
+find Expression CC
+quit
+EOF
+)
 fail=0
 check() {       # check <description> <command...>
     d=$1; shift
@@ -100,5 +120,10 @@ check "unplugged: 5-pin only"     eval '[ "$(dn 5)" = "din-out 80 29 00" ] && ! 
 check "5-pin: no errors"          eval '! dhas "^error"'
 check "1 KB sysex to the 5-pin"   eval 'printf "%s\n" "$long" | grep -qx "din-out $sx"'
 check "1 KB sysex from the 5-pin" eval 'printf "%s\n" "$long" | grep -qx "out 2 $sx"'
+mfind() { printf '%s\n' "$menu" | grep -E '^(found|notfound)' | sed -n "$1p" | grep -q "^$2"; }
+check "menu: Keys ends at All Notes Off" mfind 1 'found '
+check "menu: no Aftertouch on the M32"   mfind 2 notfound
+check "menu: Controls ends at Pedal Ring" mfind 3 'found '
+check "menu: no Expression CC on the M32" mfind 4 notfound
 [ $fail = $dfail ] || { echo "--- 5-pin transcript"; printf '%s\n' "$din" "$long" | cut -c1-200; }
 exit $fail

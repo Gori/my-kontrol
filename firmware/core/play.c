@@ -23,6 +23,8 @@ static uint8_t key_zone[BOARD_KEYS], key_note[BOARD_KEYS], key_down[BOARD_KEYS];
 static int32_t strip_out[2] = {8192, 0}, strip_target[2] = {8192, 0};
 static uint8_t mod_sent = 0xFF;
 static uint8_t pedal_down[2];
+static uint8_t pressure_in, pressure_sent;   /* channel pressure: from the keybed, and on the wire */
+static uint8_t expr_sent = 0xFF;
 
 static void send_both(uint8_t status, uint8_t a, uint8_t b)
 {
@@ -69,6 +71,8 @@ void play_init(void)
     lower_active = settings.split_on;
     for (int k = 0; k < BOARD_KEYS; k++)
         key_down[k] = 0;
+    pressure_in = pressure_sent = 0;
+    expr_sent = 0xFF;
     sp_init(&settings.sp, sp_out);
 }
 
@@ -166,6 +170,30 @@ void play_pedal(uint8_t sw, int down)
     send_both(0xB0, settings.pedal_cc[sw], down ? 127 : 0);
 }
 
+static void pressure_send(void)
+{
+    uint8_t v = settings.aftertouch == AT_ON ? pressure_in : 0;
+    if (v != pressure_sent) {
+        pressure_sent = v;
+        send_both(0xD0, v, 0);
+    }
+}
+
+void play_aftertouch(uint8_t v)
+{
+    pressure_in = v > 127 ? 127 : v;
+    pressure_send();
+}
+
+void play_expression(uint16_t v)
+{
+    uint8_t cc = (v > 16383 ? 16383 : v) >> 7;
+    if (cc != expr_sent) {
+        expr_sent = cc;
+        send_both(0xB0, settings.expression_cc, cc);
+    }
+}
+
 void play_pedal_unplugged(void)
 {
     play_pedal(0, 0);
@@ -194,6 +222,8 @@ static void leave_channel(int zone)
         for (int s = 0; s < 2; s++)
             if (pedal_down[s])
                 midi_keys3(0xB0 | ch, settings.pedal_cc[s], 0);
+        if (pressure_sent)
+            midi_keys3(0xD0 | ch, 0, 0);
     }
 }
 
@@ -215,6 +245,7 @@ void play_settings_changed(void)
         zone_ch[ZONE_LOWER] = settings.lower_channel;
         lower_active = settings.split_on;
     }
+    pressure_send();                 /* Aftertouch turned off: back to none */
     sp_config_changed();
 }
 

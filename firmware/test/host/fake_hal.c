@@ -11,7 +11,10 @@ int fake_flash_fail_after = -1;     /* simulate a power cut after N more half-wo
 uint8_t fake_lights[64];
 int fake_display_on = 1;
 
-const board_info_t board_info = {"Host Board", "HOST", 99, BOARD_KEYS, 41, BOARD_KNOBS, 0xF};
+#ifndef FAKE_CAPS
+#define FAKE_CAPS 0x1FF                     /* everything; 0xF = the M32's */
+#endif
+const board_info_t board_info = {"Host Board", "HOST", 99, BOARD_KEYS, 41, BOARD_KNOBS, FAKE_CAPS};
 
 void fake_reset(void)
 {

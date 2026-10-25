@@ -647,11 +647,16 @@ static void button(uint8_t ctl, int down)
         return;
     }
 
-    /* the menu owns the 4D controls while it is open */
+    /* the menu owns the 4D controls while it is open, and Back and Enter */
     if (is_nav(ctl) && ui_menu_open()) {
         static const uint8_t map[] = {UI_UP, UI_LEFT, UI_RIGHT, UI_DOWN, UI_PUSH};
         if (down)
             ui_input(map[ctl - CTL_NAV_UP], 0);
+        return;
+    }
+    if ((ctl == CTL_BACK || ctl == CTL_ENTER) && ui_menu_open()) {
+        if (down)
+            ui_input(ctl == CTL_BACK ? UI_BACK : UI_PUSH, 0);
         return;
     }
     /* a list or message screen from the host takes the 4D */
@@ -834,6 +839,12 @@ void app_event(const mk_event_t *ev)
     }
     case EV_PEDAL:
         play_pedal(ev->id, ev->value);
+        break;
+    case EV_AFTERTOUCH:
+        play_aftertouch(ev->value);
+        break;
+    case EV_EXPRESSION:
+        play_expression(ev->value);
         break;
     }
 }

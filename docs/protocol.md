@@ -155,7 +155,7 @@ use.
 | fw_major, fw_minor, fw_patch | 3 bytes | firmware version |
 | keys | byte | number of keys |
 | knobs | byte | number of knobs |
-| caps | byte | bit 0 touch strips, 1 knob touch sensing, 2 4D encoder, 3 pedal jack |
+| caps | byte | bit 0 touch strips, 1 knob touch sensing, 2 4D encoder, 3 pedal jack; the other bits are 0 (the surface description has the rest) |
 | view | byte | the current mode, as in VIEW |
 | max_rx | u14 | longest message accepted, F0 to F7 (at least 128) |
 | list_rows | byte | list rows the screen shows at once |
@@ -246,7 +246,7 @@ Shared by every keyboard. A board sends only the IDs it has.
 
 IDs 32–63 are reserved for controls on other models: 32 Clear, 33 Mixer,
 34 Instance, 35 MIDI, 36 Setup, 37 Auto, 38 Count-in, 39 Page ←, 40 Page →,
-41 Fixed Vel, 42 Keys, 43 Chord.
+41 Fixed Vel, 42 Keys, 43 Chord, 44 Back, 45 Enter, 46 Encoder touch.
 
 ### What the keyboard keeps
 

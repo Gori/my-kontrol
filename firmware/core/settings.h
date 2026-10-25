@@ -15,6 +15,7 @@ enum tempo_light { TEMPO_LIGHT_AUTO, TEMPO_LIGHT_ALWAYS, TEMPO_LIGHT_OFF, TEMPO_
 enum { DAW_YES, DAW_NO };            /* daw_scale, daw_view: 0 = the DAW may set it */
 enum { NAV_OFF, NAV_AUTO, NAV_ALWAYS, NAV_COUNT };   /* nav_keys */
 enum { MIDI_OUT_BOTH, MIDI_OUT_USB, MIDI_OUT_DIN, MIDI_OUT_COUNT };   /* midi_out: where the keys go */
+enum { AT_ON, AT_OFF };              /* aftertouch: 0 = on, so older records keep it on */
 
 /* What the knobs control while a DAW is connected; M / S step through
    knob_modes[] (KM_OFF entries are skipped). */
@@ -54,7 +55,9 @@ typedef struct {
     uint8_t daw_view;       /* DAW_YES: the DAW may switch the knob mode (SET_MODE) */
     uint8_t midi_out;       /* MIDI_OUT_* (BOARD_MIDI_DIN) */
     uint8_t midi_thru;      /* 5-pin in echoed to 5-pin out (BOARD_MIDI_DIN) */
-    uint8_t reserved[4];    /* zero; room for small additions without a version bump */
+    uint8_t aftertouch;     /* AT_*: channel pressure from the keybed (CAP_AFTERTOUCH) */
+    uint8_t expression_cc;  /* CC the expression pedal sends (CAP_EXPRESSION) */
+    uint8_t reserved[2];    /* zero; room for small additions without a version bump */
 } settings_t;
 
 extern settings_t settings;

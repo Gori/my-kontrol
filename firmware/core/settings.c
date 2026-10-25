@@ -34,6 +34,7 @@ void settings_defaults(settings_t *s)
     s->led_dim = 0x1E;
     s->screensaver = 3;          /* 10 min */
     s->nav_keys = NAV_AUTO;
+    s->expression_cc = 11;
 }
 
 static void clamp_u8(uint8_t *v, int lo, int hi, int def)
@@ -109,5 +110,7 @@ void settings_sanitize(settings_t *s)
     clamp_u8(&s->daw_view, 0, 1, DAW_YES);
     clamp_u8(&s->midi_out, 0, MIDI_OUT_COUNT - 1, MIDI_OUT_BOTH);
     clamp_u8(&s->midi_thru, 0, 1, 0);
+    clamp_u8(&s->aftertouch, 0, 1, AT_ON);
+    clamp_u8(&s->expression_cc, 0, 127, 11);
     clamp_u8(&s->screensaver, 0, settings_screensaver_count - 1, 3);
 }

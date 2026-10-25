@@ -83,6 +83,7 @@ struct menu {
 };
 
 static const char *const off_on[] = {"Off", "On"};
+static const char *const on_off[] = {"On", "Off"};
 static const char *const scale_modes[] = {"Off", "Quantize", "Easy"};
 static const char *const vel_curves[] = {"Soft", "Linear", "Hard", "Fixed"};
 static const char *const clock_src[] = {"Internal", "External"};
@@ -162,6 +163,7 @@ static const item_t keys_items[] = {
     {"Split At",  K_INT,  T_U8, &S->split_note, 24, 108, 1, 0, fmt_note},
     {"Lower Ch",  K_INT,  T_U8, &S->lower_channel, 0, 15, 1, 0, fmt_plus1},
     {"Lower Oct", K_INT,  T_S8, &S->lower_octave, -3, 3, 1, 0, fmt_signed},
+    {"Aftertouch", K_ENUM, T_U8, &S->aftertouch, 0, 1, 1, on_off},
     {"All Notes Off", K_ACTION, .action = act_panic},
 };
 static const item_t control_items[] = {
@@ -183,6 +185,7 @@ static const item_t control_items[] = {
     {"Mod Strip CC", K_INT, T_U8, &S->strip_mod_cc, 0, 127, 1},
     {"Pedal Tip CC", K_INT, T_U8, &S->pedal_cc[0], 0, 127, 1},
     {"Pedal Ring CC", K_INT, T_U8, &S->pedal_cc[1], 0, 127, 1},
+    {"Expression CC", K_INT, T_U8, &S->expression_cc, 0, 127, 1},
 };
 static const item_t preset_items[] = {
     {"Slot", K_INT, T_U8, &preset_slot, 0, 7, 1, 0, fmt_slot},
@@ -223,6 +226,36 @@ static const item_t main_items[] = {
     {"System",        K_SUB, .sub = &system_menu},
 };
 static const menu_t main_menu = MENU("Menu", main_items);
+
+/* items for what only some keyboards have, by the setting they change */
+static const struct { const void *ptr; uint16_t cap; } item_caps[] = {
+    {&S->aftertouch, CAP_AFTERTOUCH},
+    {&S->expression_cc, CAP_EXPRESSION},
+};
+
+static int shown(const item_t *it)
+{
+    for (unsigned i = 0; i < sizeof item_caps / sizeof item_caps[0]; i++)
+        if (it->ptr == item_caps[i].ptr)
+            return (board_info.caps & item_caps[i].cap) != 0;
+    return 1;
+}
+
+static int items_shown(const menu_t *m)
+{
+    int n = 0;
+    for (int i = 0; i < m->n; i++)
+        n += shown(&m->items[i]);
+    return n;
+}
+
+static const item_t *item(const menu_t *m, int i)   /* i-th shown item */
+{
+    for (int k = 0; k < m->n; k++)
+        if (shown(&m->items[k]) && i-- == 0)
+            return &m->items[k];
+    return &m->items[0];
+}
 
 /* ---------- state ---------- */
 
@@ -440,9 +473,9 @@ void ui_tick_ms(uint32_t ms)
 static void move(int d)
 {
     const menu_t *m = stack[depth];
-    int s = sel[depth] + d;
+    int s = sel[depth] + d, n = items_shown(m);
     if (s < 0) s = 0;
-    if (s >= m->n) s = m->n - 1;
+    if (s >= n) s = n - 1;
     sel[depth] = s;
     if (s < top[depth]) top[depth] = s;
     if (s > top[depth] + ROWS - 1) top[depth] = s - ROWS + 1;
@@ -480,7 +513,7 @@ static void enter(void)
         return;
     }
     if (dialog) { dialog = DLG_NONE; return; }
-    const item_t *it = &stack[depth]->items[sel[depth]];
+    const item_t *it = item(stack[depth], sel[depth]);
     switch (it->kind) {
     case K_SUB:
         if (depth + 1 < DEPTH) {
@@ -521,7 +554,7 @@ int ui_input(uint8_t in, int16_t value)
         else if (in == UI_LEFT || in == UI_BACK) back();
         return 1;
     }
-    const item_t *it = &stack[depth]->items[sel[depth]];
+    const item_t *it = item(stack[depth], sel[depth]);
     switch (in) {
     case UI_TURN:
         if (editing) edit(it, value);
@@ -854,13 +887,14 @@ static void render_menu(void)
     const menu_t *m = stack[depth];
     int tx = gfx_text(1, 0, m->title, &font_small);
     gfx_fill(tx + 3, 3, DISP_W - 3 - tx - 3, 1, 1);
-    if (m->n > ROWS) {
-        int h = 24 * ROWS / m->n, y = 8 + (24 - h) * top[depth] / (m->n - ROWS);
+    int n = items_shown(m);
+    if (n > ROWS) {
+        int h = 24 * ROWS / n, y = 8 + (24 - h) * top[depth] / (n - ROWS);
         gfx_fill(DISP_W - 2, y, 2, h, 1);
     }
-    for (int r = 0; r < ROWS && top[depth] + r < m->n; r++) {
+    for (int r = 0; r < ROWS && top[depth] + r < n; r++) {
         int i = top[depth] + r, y = 8 + r * 8;
-        const item_t *it = &m->items[i];
+        const item_t *it = item(m, i);
         char v[22];
         if (it->kind == K_SUB) put_str(v, ">");
         else if (it->kind == K_ACTION || it->kind == K_CONFIRM) v[0] = 0;

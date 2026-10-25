@@ -20,6 +20,8 @@ enum mk_event_type {
     EV_KNOB_TOUCH,   /* id = knob, value = 1 touched / 0 released */
     EV_STRIP,        /* id = STRIP_PITCH / STRIP_MOD, value = 0..16383, or -1 when released */
     EV_PEDAL,        /* id = 0 tip / 1 ring, value = 1 pressed / 0 released */
+    EV_AFTERTOUCH,   /* keybed pressure, value = 0..127 (CAP_AFTERTOUCH) */
+    EV_EXPRESSION,   /* expression pedal, value = 0..16383 (CAP_EXPRESSION) */
 };
 
 enum { STRIP_PITCH, STRIP_MOD };
@@ -31,12 +33,22 @@ typedef struct {
 
 /* ---------- board ---------- */
 
+/* What the keyboard has; a core feature runs only when its cap is set.
+   Bits 0..3 are IDENT's caps byte (docs/protocol.md). */
 enum {
     CAP_STRIPS = 1 << 0,
     CAP_KNOB_TOUCH = 1 << 1,
     CAP_4D = 1 << 2,
     CAP_PEDAL = 1 << 3,
+    CAP_LIGHT_GUIDE = 1 << 4,    /* an RGB light per key: board_key_light */
+    CAP_STRIP_LEDS = 1 << 5,     /* lights beside the touch strips: board_strip_leds */
+    CAP_AFTERTOUCH = 1 << 6,     /* EV_AFTERTOUCH */
+    CAP_EXPRESSION = 1 << 7,     /* EV_EXPRESSION */
+    CAP_ENCODER_TOUCH = 1 << 8,  /* CTL_ENCODER_TOUCH */
 };
+
+/* board_strip_leds styles */
+enum { STRIP_LEDS_OFF, STRIP_LEDS_BAR, STRIP_LEDS_DOT, STRIP_LEDS_CENTRE };
 
 typedef struct {
     const char *name;        /* "Komplete Kontrol M32" */
@@ -45,7 +57,7 @@ typedef struct {
     uint8_t keys;            /* keybed size */
     uint8_t base_note;       /* MIDI note of key 0 at octave 0 */
     uint8_t knobs;
-    uint8_t caps;            /* CAP_* */
+    uint16_t caps;           /* CAP_* */
 } board_info_t;
 
 extern const board_info_t board_info;
@@ -63,6 +75,11 @@ void board_display_power(int on);
 void board_usb_pullup(int on);
 int board_diag(uint8_t *buf, int max);  /* board-specific bytes for the diag request */
 int board_serial(char *out, int max);   /* USB serial to report, or 0 to use the chip ID */
+
+/* Only called on boards with the cap, so other boards leave them out. */
+void board_key_light(uint8_t key, uint8_t r, uint8_t g, uint8_t b);   /* CAP_LIGHT_GUIDE, 0..255 each */
+void board_key_lights_flush(void);
+void board_strip_leds(uint8_t strip, uint8_t style, uint16_t value);  /* CAP_STRIP_LEDS: STRIP_LEDS_*, 0..16383 */
 
 /* ---------- platform ---------- */
 

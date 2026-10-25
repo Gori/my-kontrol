@@ -304,6 +304,73 @@ static void test_store_power_cut(void)
     }
 }
 
+/* the Keys port since the last fake_clear_midi() is exactly these bytes */
+static int keys_are(const uint8_t *m, int n)
+{
+    fake_drain_midi();
+    int ok = fake_midi_n[PORT_KEYS] == n && !memcmp(fake_midi[PORT_KEYS], m, n);
+    fake_clear_midi();
+    return ok;
+}
+#define KEYS_ARE(...) keys_are((const uint8_t[]){__VA_ARGS__}, sizeof (const uint8_t[]){__VA_ARGS__})
+
+static void test_play_aftertouch(void)
+{
+    play_reset();
+    CHECK(settings.aftertouch == AT_ON, "on by default");
+    play_aftertouch(64);
+    play_aftertouch(64);
+    CHECK(KEYS_ARE(0xD0, 64), "channel pressure, once per value");
+    play_aftertouch(0);
+    CHECK(KEYS_ARE(0xD0, 0), "back to none");
+
+    settings.split_on = 1;
+    play_settings_changed();
+    play_aftertouch(10);
+    CHECK(KEYS_ARE(0xD0, 10, 0xD1, 10), "both zones, like the pedals");
+    settings.split_on = 0;
+    play_settings_changed();
+    fake_clear_midi();
+
+    play_aftertouch(90);
+    fake_clear_midi();
+    settings.aftertouch = AT_OFF;
+    play_settings_changed();
+    CHECK(KEYS_ARE(0xD0, 0), "turned off while pressed: none");
+    play_aftertouch(50);
+    fake_drain_midi();
+    CHECK(fake_midi_n[PORT_KEYS] == 0, "off: nothing sent");
+
+    settings.aftertouch = AT_ON;
+    play_settings_changed();
+    fake_clear_midi();
+    play_aftertouch(70);
+    fake_clear_midi();
+    settings.channel = 3;
+    play_settings_changed();
+    CHECK(KEYS_ARE(0xD0, 0), "a channel change ends the pressure on the old channel");
+    play_aftertouch(71);
+    CHECK(KEYS_ARE(0xD3, 71), "then on the new one");
+}
+
+static void test_play_expression(void)
+{
+    play_reset();
+    CHECK(settings.expression_cc == 11, "CC 11 by default");
+    play_expression(16383);
+    play_expression(16300);                  /* same 7-bit value */
+    CHECK(KEYS_ARE(0xB0, 11, 127), "expression CC, once per value");
+    play_expression(0);
+    CHECK(KEYS_ARE(0xB0, 11, 0), "heel down");
+    settings.expression_cc = 4;
+    play_expression(8192);
+    CHECK(KEYS_ARE(0xB0, 4, 64), "the CC from settings");
+    settings.expression_cc = 200;
+    settings.aftertouch = 7;
+    settings_sanitize(&settings);
+    CHECK(settings.expression_cc == 11 && settings.aftertouch == AT_ON, "sanitize");
+}
+
 static void test_store_sanitize(void)
 {
     fake_reset();
@@ -358,6 +425,8 @@ int main(void)
     RUN(test_play_panic_pedal);
     RUN(test_store_roundtrip);
     RUN(test_store_power_cut);
+    RUN(test_play_aftertouch);
+    RUN(test_play_expression);
     RUN(test_store_sanitize);
     RUN(test_presets);
     printf(failures ? "%d FAILED\n" : "all tests passed\n", failures);

@@ -9,6 +9,8 @@ void play_key(uint8_t key, uint8_t velocity, int on);   /* key = keybed index */
 void play_strip(uint8_t strip, int16_t value);           /* value 0..16383, -1 released */
 void play_pedal(uint8_t sw, int down);
 void play_pedal_unplugged(void);
+void play_aftertouch(uint8_t value);     /* 0..127: channel pressure, unless Aftertouch is off */
+void play_expression(uint16_t value);    /* 0..16383: the expression CC */
 void play_tick_ms(uint32_t ms);
 void play_settings_changed(void);  /* releases notes on a channel or split change */
 void play_panic(void);             /* everything off, including CC 123 on the channels in use */
