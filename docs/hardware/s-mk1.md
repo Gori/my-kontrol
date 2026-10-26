@@ -265,7 +265,7 @@ Image format:
 - **Header:** magic 0x01A551E5, CRC, length, and 2 segments, one per tile.
 - **Segments:** each is loaded at 0x10000 and ends with a CRC.
 - **CRC:** the XS1 `crc32` step, polynomial 0xEDB88320.
-- **Header word 4:** differs per model.
+- **Header word 4:** differs per model, and per image: xflash writes it, and our images get other values than NI's.
   - The boot loader checks it (T). With NI's value, an image with changed segment contents boots. With 0, 0x7FFFFFFF or 0xFFFFFFFF, the loader falls back to the factory image.
   - My Kontrol packages its images with XMOS's `xflash`. XTC 15.3.1's xflash with `--factory-version` 10, 11 or 12 rebuilds NI's 1.2.0 images of all four models from their two segments with the same header (word 4 included) and segments; only the page padding after the image differs (0xFF against NI's 0x00). Versions 13 and later write another header format, so the factory image is a tools-12-era build (offline, `tools/xcore/s49pack.py proof`).
 
@@ -284,7 +284,7 @@ Image format:
 **NI's tile link** (observed on the board model with NI's whole image; used by the hybrid bring-up image, `firmware/platform/xs1/ni_link.c`, which has the details):
 - Start-up is the XC runtime's channel set-up with tile 1 as master: 10 chanends of tile 0 are connected, 4 of them to tile 1.
 - Every value moves as an XC transfer: END from the sender, END back, the data and END, END back.
-- Tile 0 polls tile 1's router for MIDI (0x0A and a count) and hands over one USB-MIDI packet per poll when asked (0xC000001D); MIDI for tile 0 comes back in the poll's answer (0xC000001F, count, packets), followed by two words from tile 0.
+- Tile 0 polls tile 1's router for MIDI (0x0A and a count) and hands over one USB-MIDI packet per poll when asked (0xC000001D); MIDI for tile 0 comes back in the poll's answer (0xC000001F, count, packets), followed by a word 2 and one word per packet from tile 0 (1: a template block exchange follows; 0: none).
 - Tile 1's USB thread wants three LED tables and a byte at start (none in update mode, where it starts with 0x40000000) and a poll from tile 0 before its other threads go on.
 
 ## Open

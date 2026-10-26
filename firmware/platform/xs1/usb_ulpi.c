@@ -10,6 +10,7 @@
 #include "usb_ulpi.h"
 #include "usb_packet.h"
 #include "usb_ep.h"
+#include "bringup.h"
 
 #if defined(__xcore__)
 
@@ -98,11 +99,18 @@ static void ports_init(void)
 uint8_t usb_ulpi_phy_bringup(void)
 {
     ports_init();
+    BRINGUP_DIAG(bringup_diag.sie_stage = 1);
     /* FUNC_CTRL.RESET pulse, then full-speed device config. The PHY must be
        supplying CLK already (external PHY drives the link clock on 1H). */
     ulpi_reg_write(&g_io, ULPI_REG_FUNC_CTRL, ULPI_FC_RESET);
+    BRINGUP_DIAG(bringup_diag.sie_stage = 2);
     for (volatile int i = 0; i < 1000; i++) { }
-    return ulpi_phy_init_fs(&g_io);            /* FUNC_CTRL = FS + TERMSELECT + SUSPENDM */
+    BRINGUP_DIAG(for (int i = 0; i < 4; i++) bringup_diag.ulpi_id[i] = ulpi_reg_read(&g_io, (uint8_t)i);
+                 bringup_diag.sie_stage = 3);
+    uint8_t r = ulpi_phy_init_fs(&g_io);       /* FUNC_CTRL = FS + TERMSELECT + SUSPENDM */
+    BRINGUP_DIAG(bringup_diag.func_ctrl = ulpi_reg_read(&g_io, ULPI_REG_FUNC_CTRL);
+                 bringup_diag.sie_stage = 4);
+    return r;
 }
 
 /* ---- packet TX/RX over the data port (60 MHz; HARDWARE-UNVERIFIED) ----
@@ -171,9 +179,16 @@ static void service_wire(void)
 {
     uint8_t buf[72];
     int n = rxpkt(buf, sizeof buf);
-    if (n < 1 || !usb_pid_valid(buf[0]))
+    BRINGUP_DIAG(if (n >= 1) { bringup_diag.rx_packets++; bringup_diag.last_rx0 = buf[0]; });
+    if (n < 1 || !usb_pid_valid(buf[0])) {
+        BRINGUP_DIAG(if (n >= 1) bringup_diag.bad_pid++);
         return;
+    }
     usb_pid_t pid = usb_pid_of(buf[0]);
+    BRINGUP_DIAG(if (pid == USB_PID_SETUP) bringup_diag.setup_tokens++;
+                 else if (pid == USB_PID_IN) bringup_diag.in_tokens++;
+                 else if (pid == USB_PID_OUT) bringup_diag.out_tokens++;
+                 else bringup_diag.other_tokens++);
     uint8_t ep = (uint8_t)((buf[1] >> 7) | ((buf[2] & 0x07) << 1));   /* from the token */
 
     if (pid == USB_PID_SETUP) {
@@ -233,6 +248,7 @@ void usb_ulpi_sie_thread(uint32_t chan)
     g_ep.on_address  = ev_address;
 
     usb_ulpi_phy_bringup();
+    BRINGUP_DIAG(bringup_diag.sie_stage = 5);
 
     for (;;) {
         if (wait_event(chan, ULPI_PORT_DIR) == 0) {
@@ -242,6 +258,7 @@ void usb_ulpi_sie_thread(uint32_t chan)
             while (ulpi_get(&ulpi_cmdq, &m))
                 apply_cmd(m.tag, m.a, m.b, m.c);
         } else {
+            BRINGUP_DIAG(bringup_diag.wire_events++);
             service_wire();
         }
     }

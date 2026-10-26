@@ -12,6 +12,7 @@
 
 #include "device/dcd.h"
 #include "usb_ulpi.h"
+#include "bringup.h"
 
 #if defined(__xcore__)
 static inline void c_outt(uint32_t c, uint32_t t) { asm volatile("outt res[%0], %1" :: "r"(c), "r"(t) : "memory"); }
@@ -76,6 +77,7 @@ void dcd_set_address(uint8_t rhport, uint8_t dev_addr)
     /* The SIE sends the EP0-IN status ZLP and latches the address after it
        completes (USB 2.0 §9.4.6). */
     send_cmd(ULPI_CMD_SET_ADDR, dev_addr, 0, 0);
+    BRINGUP_DIAG(bringup_diag.address = dev_addr; bringup_diag.flags |= 4);
 }
 
 void dcd_remote_wakeup(uint8_t rhport) { (void)rhport; }
@@ -96,13 +98,16 @@ void usb_dcd_pump(void)
             s[0]=m.a; s[1]=m.a>>8; s[2]=m.a>>16; s[3]=m.a>>24;
             s[4]=m.b; s[5]=m.b>>8; s[6]=m.b>>16; s[7]=m.b>>24;
             dcd_event_setup_received(0, s, false);
+            BRINGUP_DIAG(bringup_diag.evt_setup++; bringup_diag.flags |= 2);
             break;
         }
         case ULPI_EVT_COMPLETE:
             dcd_event_xfer_complete(0, (uint8_t)m.a, m.b, XFER_RESULT_SUCCESS, false);
+            BRINGUP_DIAG(bringup_diag.evt_complete++);
             break;
         case ULPI_EVT_RESET:
             dcd_event_bus_reset(0, (tusb_speed_t)m.a, false);
+            BRINGUP_DIAG(bringup_diag.evt_reset++; bringup_diag.flags |= 1);
             break;
         case ULPI_EVT_SOF:
             dcd_event_sof(0, m.a, false);
@@ -143,6 +148,7 @@ bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t *buffer, uint16_t to
 {
     (void)rhport; (void)is_isr;
     send_cmd(ULPI_CMD_XFER, ep_addr, (uint32_t)(uintptr_t)buffer, total_bytes);
+    BRINGUP_DIAG(bringup_diag.dcd_xfers++);
     return true;
 }
 
@@ -150,6 +156,7 @@ void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr)
 {
     (void)rhport;
     send_cmd(ULPI_CMD_STALL, ep_addr, 0, 0);
+    BRINGUP_DIAG(bringup_diag.dcd_stalls++);
 }
 
 void dcd_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr)

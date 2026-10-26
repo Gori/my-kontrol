@@ -47,8 +47,12 @@ Commands (--stdio, one per line; blank lines and # comments are skipped):
   flash ADDR [N]        `flash <addr> <hex>`: N bytes (default 16) of the SPI flash at hex ADDR
   flash-set ADDR HEX    put bytes into the SPI flash directly (a state earlier runs left)
   hang                  tile 0's main thread stops for good (a hung main loop: the watchdog)
-  flash-layout [FILE]   an XMOS boot layout in the flash (our test bytes: boot loader, factory
-                        image, FILE as the upgrade image): `flash-layout slot <lo>-<hi>`
+  flash-layout [FILE [FACTORY]]  an XMOS boot layout in the flash (our test bytes: boot loader,
+                        factory image or FACTORY, FILE as the upgrade image): `flash-layout slot
+                        <lo>-<hi>`
+  boot-flash            from now on a chip reset or `power` starts what the boot loader would:
+                        the upgrade image if it checks out, else the factory image
+                        (s49emu.boot_images); `booted` says which
 USB (our tile 1 image with --map1: a host at the level of the SIE thread, s49emu.UsbHost; the
 wire is not modelled):
   usb-enum              reset, enumerate, configure: `usb-device VID:PID bcd .. "product"
@@ -118,6 +122,7 @@ class Harness:
         self.maps = (map0, map1)
         self.syms = (xsim.read_map(map0) if map0 else None, xsim.read_map(map1) if map1 else None)
         self.peaks = {}
+        self.boot_flash = False         # `boot-flash`: restarts take the images from the flash
         self.font = load_font16()
         self.resets = 0
         self.stopped = None
@@ -129,8 +134,12 @@ class Harness:
         (a chip reset) also each tile's RAM outside its image, as on the chip."""
         if old:
             self.note_stacks(old)
-        self.b = s49emu.Board(self.imgs[0], self.imgs[1], ui_syms=self.syms[0],
-                              usb_syms=self.syms[1])
+        imgs, syms, self.booted = self.imgs, self.syms, 'images'
+        if old and self.boot_flash and old.flash:     # what the boot loader would start
+            found, self.booted = s49emu.boot_images(old.flash.mem)
+            if found and tuple(found) != tuple(self.imgs):
+                imgs, syms, warm = found, (None, None), False
+        self.b = s49emu.Board(imgs[0], imgs[1], ui_syms=syms[0], usb_syms=syms[1])
         if old and warm:
             for new_t, old_t, img in ((self.b.ui, old.ui, self.imgs[0]), (self.b.usb, old.usb, self.imgs[1])):
                 if new_t is not None and old_t is not None:
@@ -473,9 +482,15 @@ class Harness:
                 if len(args) > 0:
                     open(args[0], 'wb').write(data)
                 return ['dfu-upload %d bytes' % len(data)]
-            elif cmd == 'hang':
-                tl = self.b.ui
+            elif cmd == 'hang':             # hang [1 STACK]: tile 0's main, or the tile 1
+                k = 1 if args and args[0] == '1' else 0      # thread whose stack is STACK
+                tl = (self.b.ui, self.b.usb)[k]
                 t = tl.threads[0]
+                if len(args) > 1:
+                    names = {n: (a, size) for a, size, n in s49emu.stack_blocks(self.maps[k])}
+                    a, size = next(v for n, v in names.items() if n.endswith(':' + args[1]))
+                    t = next(x for x in tl.threads if x.state != 'free' and x.sp_top is not None
+                             and a <= x.sp_top <= a + size)
                 if t in tl.runq:
                     tl.runq.remove(t)
                 t.state = 'hung'
@@ -487,8 +502,13 @@ class Harness:
                 if not self.b.flash:
                     return ['error: `flash-layout` needs our tile 1 image']
                 up = open(args[0], 'rb').read() if args else None
-                lo, hi = self.b.flash.xmos_layout(up)
+                fac = open(args[1], 'rb').read() if len(args) > 1 else None
+                lo, hi = self.b.flash.xmos_layout(up, fac)
                 return ['flash-layout slot %05X-%05X' % (lo, hi)]
+            elif cmd == 'boot-flash':
+                self.boot_flash = True
+            elif cmd == 'booted':
+                return ['booted %s' % self.booted]
             elif cmd == 'flash':
                 a, n = int(args[0], 16), int(args[1]) if len(args) > 1 else 16
                 mem = self.b.flash.mem if self.b.flash else self.b.link.flash

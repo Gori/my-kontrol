@@ -6,8 +6,9 @@ usage:
       NI's upgrade image apart into its two segments, an .xe from them (xe.py,
       firmware/boards/s-mk1/s-mk1.xn), xflash over every --factory-version, each output
       compared with NI's file byte for byte
-  s49pack.py image [--dev] [--version N] [--factory-version V]
-      our firmware, both tiles (make BOARD=s49 [DEV=1]) -> firmware/build/s49[-dev]/
+  s49pack.py image [--dev | --bringup] [--version N] [--factory-version V]
+      our firmware, both tiles (make BOARD=s49 [DEV=1] [BRINGUP=1]) -> firmware/build/s49[...]/
+      (--bringup: the USB bring-up build, platform/xs1/bringup.h; implies --dev)
   s49pack.py hybrid NI.bin [--version N] [--factory-version V]
       the bring-up image: our tile 0 (make BOARD=s49 HYBRID=1 DEV=1, the probe) and NI's
       tile 1 (its segment 1: USB, DFU, 5-pin) -> fw/kks/pack/ (it holds NI's code)
@@ -119,10 +120,12 @@ def build_fw(args):
 
 
 def image(a):
-    build_fw(['DEV=1'] if a.dev else [])
-    b = os.path.join(FW, 'build', 's49-dev' if a.dev else 's49')
+    dev = a.dev or a.bringup
+    build_fw((['DEV=1'] if dev else []) + (['BRINGUP=1'] if a.bringup else []))
+    tag = ('-bringup' if a.bringup else '') + ('-dev' if dev else '')
+    b = os.path.join(FW, 'build', 's49' + tag)
     t0, t1 = (open(os.path.join(b, n), 'rb').read() for n in ('tile0.bin', 'tile1.bin'))
-    name = 'my-kontrol-s49%s' % ('-dev' if a.dev else '')
+    name = 'my-kontrol-s49' + tag
     xe_path = os.path.join(b, name + '.xe')
     out = os.path.join(b, name + '-upgrade.bin')
     make_xe(xe_path, [(0, t0), (1, t1)])
@@ -155,6 +158,7 @@ def main():
     ap.add_argument('--out', default=os.path.join(ROOT, 'fw', 'kks', 'pack'))
     ap.add_argument('--xtc', default='/Applications/XMOS_XTC_15.3.1')
     ap.add_argument('--dev', action='store_true')
+    ap.add_argument('--bringup', action='store_true')
     ap.add_argument('--version', type=int, default=0, help='xflash --upgrade version (NI: 0)')
     ap.add_argument('--factory-version', default='12')
     a = ap.parse_args()

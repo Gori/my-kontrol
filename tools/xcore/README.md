@@ -126,9 +126,12 @@ smaller than `-Os`, which matters in 64 KB per tile.
   boot loader (0, 0x7FFFFFFF, 0xFFFFFFFF are rejected), not by libflash. xflash writes it:
   `s49pack.py proof` rebuilds NI's S25/S49/S61/S88 1.2.0 images from their segments with
   XTC 15.3.1's xflash (`--factory-version 10`, `11` or `12`) with header and segments byte
-  for byte as NI's; only the page padding after L differs (xflash 0xFF, NI 0x00). By trying:
-  the word changes with `--upgrade`'s version and not with segment contents or the XN's name
-  or oscillator. How the boot loader checks it was not looked into. `ximage.py`'s own
+  for byte as NI's; only the page padding after L differs (xflash 0xFF, NI 0x00). The word
+  depends on the image: our full image and the hybrid get other values than NI's at the same
+  `--upgrade 0`, and it changes with `--upgrade`'s version. One test that flipped a single bit
+  in one segment left it unchanged, and changing the XN's name or oscillator did not change
+  it either, so it is not a plain checksum over the bytes. How it is derived, and how the
+  boot loader checks it, was not looked into. `ximage.py`'s own
   `--id` default 0 does not boot; it stays a checker.
 - Segment order/flags: the segments follow the XN's JTAG chain, flags = routing id << 16 |
   2 (0x80000002: our tile 0, node 1; 2: the boot node, our tile 1), as in NI's images.
@@ -157,8 +160,16 @@ header (not 0x01A551E5), which NI's factory image (tools 12 era) would not take.
   my-kontrol-s49[-dev]-upgrade.bin`, checked with `ximage.py --check`.
 - `hybrid NI.bin`: our tile 0 (`make BOARD=s49 HYBRID=1 DEV=1`) and NI's tile 1 →
   `fw/kks/pack/hybrid-dev-upgrade.bin` (holds NI's code: stays local).
+- `bringup`: the USB bring-up build (`BRINGUP=1 DEV=1`) is absent from the release,
+  developer and hybrid images (no `bringup_` symbol, no record magic); on the board model,
+  with `flash-layout IMAGE FACTORY` and `boot-flash` (restarts start what the boot loader
+  would, `s49emu.boot_images`): no host for 20 s gives the record, the revert and NI's 1.2.0
+  file (the factory stand-in, when present) running; a host in time gives no revert.
 - xtest `hybrid` (needs NI's image locally): our tile 0 next to NI's tile 1 on the board
-  model, the probe in and out through NI's 5-pin MIDI, the update-mode start.
+  model, the probe in and out through NI's 5-pin MIDI; then, in normal and update mode, a
+  hang in board_init, a hung main loop, a trap in main and a burst of 5-pin input, each
+  compared with NI's tile 1 next to NI's own tile 0 (its threads must end waiting at the
+  same pcs), with the watchdog's marker instead of a reboot, and every stack's margin.
 
 ## Board emulator: `python3 tools/xcore/s49emu.py [IMAGE] [--ms N] [-e "at T CMD"] [--leds]`
 

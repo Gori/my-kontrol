@@ -40,7 +40,9 @@
 
 static uint32_t tmr, last_tick, ms_acc;
 static volatile uint32_t wd_feeds, wd_ticks;
-static volatile uint8_t wd_off;
+static volatile uint8_t wd_off, wd_stopped;
+volatile uint8_t xs1_core_stopped;
+static void wd_fired(void);
 static uint32_t log_end;
 static uint8_t chip_id[12];
 
@@ -77,11 +79,16 @@ void hal_watchdog_feed(void)
 {
     static uint32_t ticks, since;
     wd_feeds++;
+#ifdef XS1_HYBRID
+    xs1_hybrid_check();             /* NI's tile 1 in update mode: the core stops */
+#endif
+    if (wd_stopped)                 /* the watchdog fired while we were stuck: stay stopped */
+        wd_fired();
     uint32_t now = hal_ms();
     if (wd_ticks != ticks || wd_off)
         ticks = wd_ticks, since = now;
     else if (now - since > WD_MISSES * WD_PERIOD_MS)
-        hal_reboot();
+        wd_fired();
 }
 
 void hal_unique_id(uint8_t out[12])
@@ -95,7 +102,11 @@ void hal_usb_init(void)
 
 /* ---------- the tick thread, which also watches the main loop ---------- */
 
+#ifdef XS1_HYBRID                       /* the watchdog draws its marker from this thread */
+static uint32_t tick_stack[248];
+#else
 static uint32_t tick_stack[164];       /* 92 bytes used at most, reboot included; xtest wants 512 free */
+#endif
 
 static void tick_thread(uint32_t arg)
 {
@@ -113,7 +124,7 @@ static void tick_thread(uint32_t arg)
         misses = wd_feeds == feeds && !wd_off ? misses + 1 : 0;
         feeds = wd_feeds;
         if (misses >= WD_MISSES)
-            hal_reboot();
+            wd_fired();
     }
 }
 
@@ -153,6 +164,7 @@ static void stop(const char *a, const char *b) __attribute__((noreturn));
 static void stop(const char *a, const char *b)
 {
     wd_off = 1;
+    xs1_core_stopped = 1;
     show(a, b, 0, 0);
     park();
 }
@@ -205,6 +217,26 @@ void hal_reboot(void)
 {
     wd_off = 1;
     xs1_chip_reset();
+}
+
+/* The watchdog: 2 s without the main loop (or the tick). Normally a reboot. In the hybrid
+   image (NI's tile 1) no reboot: a valid upgrade image boots every time and there is no
+   boot log, so a reboot loop would also cut a DFU download short. Instead the core stops
+   with a marker; the tick and the NI-link thread (ni_link.c) go on, so NI's USB and DFU do. */
+static void wd_fired(void)
+{
+#ifdef XS1_HYBRID
+    if (!wd_stopped) {
+        wd_stopped = 1;
+        wd_off = 1;
+        xs1_core_stopped = 1;
+        show("WATCHDOG", "STOPPED", 0, 0);   /* from whichever thread saw it */
+    }
+    if (xs1_in_main())
+        park();
+#else
+    hal_reboot();
+#endif
 }
 
 /* ---------- at link-up (tile0_link.c usb_init): the boot log and the ID ---------- */

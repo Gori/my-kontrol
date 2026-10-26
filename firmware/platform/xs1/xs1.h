@@ -53,6 +53,18 @@ static inline uint32_t xs1_inct(uint32_t c)
     asm volatile("inct %0, res[%1]" : "=r"(v) : "r"(c) : "memory");
     return v;
 }
+/* 1 on thread 0 (main) */
+static inline int xs1_in_main(void)
+{
+    uint32_t id;
+    asm volatile("get r11, id\n\tmov %0, r11" : "=r"(id) :: "r11");
+    return id == 0;
+}
+
+/* the hybrid image (ni_link.c): stops the core when NI's tile 1 is in update mode */
+void xs1_hybrid_check(void);
+extern volatile uint8_t xs1_core_stopped;   /* hal.c: stopped with a marker on the displays */
+
 extern uint32_t xs1_chanend0;           /* chanend 0, allocated first by crt0.s */
 
 /* 1 if the next token on c is a control token (waits for a token) */
@@ -174,6 +186,45 @@ static inline int xs1_wait_chan_until(uint32_t c, uint32_t tmr, uint32_t t)
         "clre\n"
         "setc res[%2], 1\n"
         : "=&r"(r) : "r"(c), "r"(tmr), "r"(t) : "r11", "memory");
+    return r;
+}
+
+/* xs1_wait3, or timer tmr passes t: 0..2 = the chanend, 3 = time */
+static inline int xs1_wait3_until(uint32_t a, uint32_t b, uint32_t c, uint32_t tmr, uint32_t t)
+{
+    int r;
+    asm volatile(
+        "clre\n"
+        "ldap r11, .Lt3a%=\n"
+        "setv res[%1], r11\n"
+        "eeu res[%1]\n"
+        "ldap r11, .Lt3b%=\n"
+        "setv res[%2], r11\n"
+        "eeu res[%2]\n"
+        "ldap r11, .Lt3c%=\n"
+        "setv res[%3], r11\n"
+        "eeu res[%3]\n"
+        "setd res[%4], %5\n"
+        "setc res[%4], 9\n"
+        "ldap r11, .Lt3t%=\n"
+        "setv res[%4], r11\n"
+        "eeu res[%4]\n"
+        "waiteu\n"
+        ".Lt3a%=:\n"
+        "ldc %0, 0\n"
+        "bu .Lt3d%=\n"
+        ".Lt3b%=:\n"
+        "ldc %0, 1\n"
+        "bu .Lt3d%=\n"
+        ".Lt3c%=:\n"
+        "ldc %0, 2\n"
+        "bu .Lt3d%=\n"
+        ".Lt3t%=:\n"
+        "ldc %0, 3\n"
+        ".Lt3d%=:\n"
+        "clre\n"
+        "setc res[%4], 1\n"
+        : "=&r"(r) : "r"(a), "r"(b), "r"(c), "r"(tmr), "r"(t) : "r11", "memory");
     return r;
 }
 

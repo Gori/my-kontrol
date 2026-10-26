@@ -157,8 +157,18 @@ Implemented (platform/xs1, boards/s-mk1):
 - Packaging (`tools/xcore/s49pack.py`): an .xe from the two tile images (`tools/xcore/xe.py`,
   `boards/s-mk1/s-mk1.xn`), then XMOS's xflash: the same path rebuilds NI's 1.2.0 images
   byte for byte (except the page padding).
+- USB bring-up build (`make BOARD=s49 DEV=1 BRINGUP=1`, `platform/xs1/bringup.h`): no host
+  configuring the device within 20 s of a start writes a diagnostic record (SIE progress,
+  ULPI IDs, counters) to a log at 0xF5000, removes the upgrade image and reboots into NI's
+  factory image, so the next try can go in over NI's DFU without anyone at the keyboard.
+  The records come back on the 5-pin OUT at every start and through vendor request 0xB9
+  once USB works (`tools/s49bringup.py`). Nothing of it is in other builds (xtest bringup).
 - Hybrid bring-up image (`make BOARD=s49 HYBRID=1 DEV=1`, `platform/xs1/ni_link.c`): our
-  tile 0 next to NI's tile 1, speaking NI's tile link, so NI's USB and update path stay;
+  tile 0 next to NI's tile 1, speaking NI's tile link, so NI's USB and update path stay. NI's
+  tile 1 waits on tile 0's polls before USB and DFU work, so two threads serve it from before
+  the board is touched, never trap on a surprise, and the watchdog stops the core with a
+  marker instead of rebooting (a reboot loop would cut a DFU download short); in NI's update
+  mode the core stops by itself;
   the probe (`boards/s-mk1/probe.c`, `tools/s49probe.py`) sends the raw panel state out of
   NI's MIDI port and walks the LED bits.
 - `make BOARD=s49` builds both tile images (`build/s49/tile0.bin`, `tile1.bin`);

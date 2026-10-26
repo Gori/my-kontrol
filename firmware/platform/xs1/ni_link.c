@@ -15,8 +15,9 @@
    - Our ch[4] <-> tile 1's router: we poll with 0x0a and our count of waiting MIDI packets
      (0 or 1), it answers with a word 0 and a word that is 0, or 0xC000001F followed by a
      transfer [count, packets] (MIDI from the 5-pin IN or USB for us), after which it waits for
-     two words from us (0, 0: tried on the emulator; NI's tile 0 sends 2, 1 and a template
-     block exchange follows, a second word 0 skips it). With a count of 1 it
+     a word 2 and one word per packet from us: NI's tile 0 answers 1 for a packet after which
+     it wants a template block exchange (seen for notes) and 0 otherwise; we always send 0
+     (seen under a burst of 5-pin input on the emulator). With a count of 1 it
      then asks on ch[9] (0xC000001D) and we send [1, the USB-MIDI packet]. One packet per
      poll and at most one poll per millisecond, as NI's tile 0 does.
    - Our ch[5] <-> tile 1's USB/HID thread: first it sends a word 0 and waits for four
@@ -32,8 +33,10 @@
    - We start our transfers with END and serve the other channels until tile 1 answers, so
      tile 1 never waits on us, whatever it is doing.
    - Our ch[8] <-> tile 1 chanend 9: no traffic seen; anything is taken and dropped.
-   One thread serves all four, so tile 1 is never left waiting on us; nothing here writes the
-   flash (settings are not kept: they last until power-off). */
+   Two threads serve them, ch[5]/ch[8] (NI's USB and DFU thread) apart from ch[4]/ch[9] (the
+   MIDI side), started before the board is touched, so no driver and no MIDI surprise can
+   leave NI's USB thread waiting; an END that does not come is never a trap (xc_end).
+   Nothing here writes the flash (settings are not kept: they last until power-off). */
 #include <string.h>
 #include "app.h"
 #include "hal.h"
@@ -57,7 +60,9 @@
 #define HID_ASK_ID 0xC0000009u
 
 static uint32_t ch[NCH];
-static uint32_t ni_stack[192];
+static volatile uint8_t ni_update;      /* tile 1 is in update mode */
+static void cmd_thread(uint32_t arg), hid_thread(uint32_t arg);
+static uint32_t cmd_stack[192], hid_stack[176];
 
 /* ---------- single producer, single consumer packet rings ---------- */
 
@@ -99,14 +104,28 @@ int ni_link_room(void)
 
 /* ---------- XC channel transfers ---------- */
 
+volatile uint32_t ni_desync;            /* data where an END was due: dropped, not trapped */
+
+/* the END that is due; data in its place (a request of tile 1's we do not know) is dropped
+   up to the next control token, so a surprise never traps the thread tile 1 depends on */
+static void xc_end(uint32_t c)
+{
+    if (!xs1_testct(c)) {
+        ni_desync++;
+        while (!xs1_testct(c))
+            (void)xs1_int(c);
+    }
+    (void)xs1_inct(c);
+}
+
 static void xc_send(uint32_t c, const uint8_t *p, uint32_t n)
 {
     xs1_outct(c, CT_END);
-    xs1_chkct(c, CT_END);
+    xc_end(c);
     for (uint32_t i = 0; i < n; i++)
         xs1_outt(c, p[i]);
     xs1_outct(c, CT_END);
-    xs1_chkct(c, CT_END);
+    xc_end(c);
 }
 
 static void xc_send_word(uint32_t c, uint32_t w)
@@ -119,7 +138,7 @@ static void xc_send_word(uint32_t c, uint32_t w)
 static uint32_t xc_recv(uint32_t c, uint8_t *p, uint32_t max)
 {
     uint32_t n = 0;
-    xs1_chkct(c, CT_END);
+    xc_end(c);
     xs1_outct(c, CT_END);
     while (!xs1_testct(c)) {
         uint8_t b = (uint8_t)xs1_int(c);
@@ -127,7 +146,7 @@ static uint32_t xc_recv(uint32_t c, uint8_t *p, uint32_t max)
             p[n] = b;
         n++;
     }
-    xs1_chkct(c, CT_END);
+    xc_end(c);
     xs1_outct(c, CT_END);
     return n;
 }
@@ -170,6 +189,10 @@ void tile0_link_open(void)
             xs1_setd(ch[idx], remote);
     }
     xs1_freer(c0);
+    /* from here tile 1 waits on our polls for its USB and DFU: served before anything
+       touches the board (a driver that hangs must not take NI's update path with it) */
+    xs1_thread_start(hid_thread, 0, hid_stack, sizeof hid_stack / 4);
+    xs1_thread_start(cmd_thread, 0, cmd_stack, sizeof cmd_stack / 4);
 }
 
 /* ---------- the thread that serves tile 1 ---------- */
@@ -211,8 +234,11 @@ static void incoming(uint32_t c)        /* 0xC000001F, then [count, packets] */
         const uint8_t *p = rx + 4 + 4 * i;   /* a little-endian packet word, sent MSB first */
         ring_put(&from_ni, (uint32_t)p[3] | p[2] << 8 | p[1] << 16 | (uint32_t)p[0] << 24);
     }
-    xc_send_word(c, 0);                 /* then it waits for two words: NI's tile 0 sends 2, 1 */
-    xc_send_word(c, 0);                 /* when it wants a template block exchange; x, 0 = none */
+    /* then it waits for a word 2 and one word per packet: NI's tile 0 answers 1 for a packet
+       that should start a template block exchange (which follows that word), 0 for none */
+    xc_send_word(c, 2);
+    for (uint32_t i = 0; i < count; i++)
+        xc_send_word(c, 0);
 }
 
 /* the three tables: a word (the count) and that many bytes, here zeros, then a byte 7 */
@@ -221,11 +247,11 @@ static void tables(uint32_t c)
     static const uint8_t count[3] = {0x70, 0x50, 0x48};
     for (int k = 0; k < 3; k++) {
         xs1_outct(c, CT_END);
-        xs1_chkct(c, CT_END);
+        xc_end(c);
         for (int i = 0; i < 4 + count[k]; i++)
             xs1_outt(c, i == 3 ? count[k] : 0);
         xs1_outct(c, CT_END);
-        xs1_chkct(c, CT_END);
+        xc_end(c);
     }
     uint8_t seven = 7;
     xc_send(c, &seven, 1);
@@ -234,30 +260,23 @@ static void tables(uint32_t c)
 /* our part of a transfer we started, after tile 1's answering END: the data, END, END */
 static void xc_finish(uint32_t c, uint32_t w)
 {
-    xs1_chkct(c, CT_END);
+    xc_end(c);
     for (int i = 24; i >= 0; i -= 8)
         xs1_outt(c, (uint8_t)(w >> i));
     xs1_outct(c, CT_END);
-    xs1_chkct(c, CT_END);
+    xc_end(c);
 }
 
-static void ni_thread(uint32_t arg)
+/* tile 1's router (ch[4]) and MIDI pulls (ch[9]) */
+static void cmd_thread(uint32_t arg)
 {
     (void)arg;
     uint32_t tmr = xs1_getr(RES_TIMER), now = xs1_time(tmr);
-    uint32_t next_cmd = now + POLL_IDLE_MS * TICKS_PER_MS, next_hid = now + HID_POLL_MS * TICKS_PER_MS;
-    uint32_t hid_hold = now;            /* after its LED state: answer it again from here */
-    uint32_t cmd = ch[4], hid = ch[5], other = ch[8], pull = ch[9], n = 0;
-    uint8_t cmd_wait = 0, hid_wait = 0;  /* we sent END; tile 1's answer starts the rest */
-    uint8_t started = 0, hid_idle = 0;   /* idle: its last status was 0, it waits for a poll */
+    uint32_t next_cmd = now + POLL_IDLE_MS * TICKS_PER_MS;
+    uint32_t cmd = ch[4], pull = ch[9], n = 0;
+    uint8_t cmd_wait = 0;               /* we sent END; tile 1's answer starts the rest */
     for (;;) {
-        uint32_t next = next_cmd;
-        if (hid_idle && (int32_t)(next_hid - next) < 0)
-            next = next_hid;
-        int hold = (int32_t)(xs1_time(tmr) - hid_hold) < 0;
-        if (hold && (int32_t)(hid_hold - next) < 0)
-            next = hid_hold;
-        switch (wait5(cmd, hold ? other : hid, other, pull, tmr, next)) {
+        switch (wait5(cmd, pull, pull, pull, tmr, next_cmd)) {
         case 0:
             if (cmd_wait) {             /* the poll: 0x0a, our count, two words back */
                 cmd_wait = 0;
@@ -269,17 +288,72 @@ static void ni_thread(uint32_t arg)
             } else if (xc_recv(cmd, rx, 4) == 4 && word_of(rx) == CMD_INCOMING) {
                 incoming(cmd);
             }
+            /* the next poll a full millisecond after this exchange: tile 1 may start one of
+               its own right after it, and must go first */
+            now = xs1_time(tmr) + TICKS_PER_MS;
+            if ((int32_t)(next_cmd - now) < 0)
+                next_cmd = now;
             break;
-        case 1:
+        case 1:                         /* tile 1 pulls the announced packet */
+        case 2:
+        case 3:
+            if (xc_recv(pull, rx, 4) == 4 && word_of(rx) == CMD_PULL) {
+                uint8_t p[8] = {0, 0, 0, pull_due ? 1 : 0,
+                                (uint8_t)(committed >> 24), (uint8_t)(committed >> 16),
+                                (uint8_t)(committed >> 8), (uint8_t)committed};
+                xc_send(pull, p, pull_due ? 8 : 4);
+                pull_due = 0;
+            }
+            break;
+        default:
+            now = xs1_time(tmr);
+            if (!cmd_wait) {
+                if (!pull_due && ring_get(&to_ni, &committed))
+                    pull_due = 1;
+                n = pull_due;           /* again if it did not take it (it skips the pull
+                                           when it had MIDI for us in the same poll) */
+                if (!xs1_ready(cmd)) {  /* (tile 1 starting something goes first) */
+                    xs1_outct(cmd, CT_END);
+                    cmd_wait = 1;
+                }
+                next_cmd = now + (n || to_ni.head != to_ni.tail ? 1 : POLL_IDLE_MS) * TICKS_PER_MS;
+            } else {
+                next_cmd = now + TICKS_PER_MS;
+            }
+            break;
+        }
+    }
+}
+
+/* tile 1's USB/HID thread (ch[5]) and ch[8]: on a thread of its own, so nothing on the
+   MIDI side can keep NI's USB and DFU thread waiting */
+static void hid_thread(uint32_t arg)
+{
+    (void)arg;
+    uint32_t tmr = xs1_getr(RES_TIMER), now = xs1_time(tmr);
+    uint32_t next_hid = now + HID_POLL_MS * TICKS_PER_MS;
+    uint32_t hid_hold = now;            /* after its LED state: answer it again from here */
+    uint32_t hid = ch[5], other = ch[8];
+    uint8_t hid_wait = 0, started = 0, hid_idle = 0;   /* idle: it waits for a poll */
+    static uint8_t hrx[8];
+    for (;;) {
+        uint32_t next = hid_idle ? next_hid : now + 100 * TICKS_PER_MS;
+        int hold = (int32_t)(xs1_time(tmr) - hid_hold) < 0;
+        if (hold && (int32_t)(hid_hold - next) < 0)
+            next = hid_hold;
+        switch (wait5(hold ? other : hid, other, other, other, tmr, next)) {
+        case 0:
             if (hid_wait) {             /* our poll: a word 0, then it sends its LED state */
                 hid_wait = 0;
                 xc_finish(hid, 0);
-            } else if (xc_recv(hid, rx, 8) == 4) {
-                uint32_t w = word_of(rx);
+            } else if (xc_recv(hid, hrx, sizeof hrx) == 4) {
+                uint32_t w = word_of(hrx);
                 if (!started) {         /* its first word: 0 asks for the tables; in update
                                            mode it sends 0x40000000 and wants none */
                     if (!w)
                         tables(hid);
+                    else
+                        ni_update = 1;  /* update mode: the core stops (xs1_hybrid_check) */
                     started = 1, hid_idle = 1;
                 } else if (w == HID_ASK_ID) {
                     uint8_t seven = 7;  /* (update mode, after our poll): answered with 7 */
@@ -292,31 +366,13 @@ static void ni_thread(uint32_t arg)
                 }
             }
             break;
+        case 1:
         case 2:
-            xc_recv(other, rx, 0);
-            break;
-        case 3:                         /* tile 1 pulls the announced packet */
-            if (xc_recv(pull, rx, 4) == 4 && word_of(rx) == CMD_PULL) {
-                uint8_t p[8] = {0, 0, 0, pull_due ? 1 : 0,
-                                (uint8_t)(committed >> 24), (uint8_t)(committed >> 16),
-                                (uint8_t)(committed >> 8), (uint8_t)committed};
-                xc_send(pull, p, pull_due ? 8 : 4);
-                pull_due = 0;
-            }
+        case 3:
+            xc_recv(other, hrx, 0);
             break;
         default:
             now = xs1_time(tmr);
-            if (!cmd_wait && (int32_t)(now - next_cmd) >= 0) {
-                if (!pull_due && ring_get(&to_ni, &committed))
-                    pull_due = 1;
-                n = pull_due;           /* again if it did not take it (it skips the pull
-                                           when it had MIDI for us in the same poll) */
-                if (!xs1_ready(cmd)) {  /* (tile 1 starting something goes first) */
-                    xs1_outct(cmd, CT_END);
-                    cmd_wait = 1;
-                }
-                next_cmd = now + (n || to_ni.head != to_ni.tail ? 1 : POLL_IDLE_MS) * TICKS_PER_MS;
-            }
             if (hid_idle && !hid_wait && (int32_t)(now - next_hid) >= 0) {
                 if (!xs1_ready(hid)) {  /* only while it waits for one: no collision */
                     xs1_outct(hid, CT_END);
@@ -325,8 +381,6 @@ static void ni_thread(uint32_t arg)
                 }
                 next_hid = now + HID_POLL_MS * TICKS_PER_MS;
             }
-            if (cmd_wait && (int32_t)(now - next_cmd) >= 0)
-                next_cmd = now + TICKS_PER_MS;
             break;
         }
     }
@@ -336,8 +390,18 @@ static void ni_thread(uint32_t arg)
 
 void usb_init(void)
 {
-    xs1_thread_start(ni_thread, 0, ni_stack, sizeof ni_stack / 4);
+    xs1_hybrid_check();
     app_usb_mounted(1);                 /* tile 1 decides where our MIDI goes */
+}
+
+/* NI's tile 1 came up in update mode (its first word on ch[5]): the core stops, only the
+   NI-link thread (and the panel threads) run on. From the main loop (hal_watchdog_feed). */
+void xs1_update_mode(void) __attribute__((noreturn));
+
+void xs1_hybrid_check(void)
+{
+    if (ni_update)
+        xs1_update_mode();
 }
 
 void usb_task(void)

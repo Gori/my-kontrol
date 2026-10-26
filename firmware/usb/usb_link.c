@@ -5,6 +5,9 @@
 #include "class/dfu/dfu.h"
 #include "board_config.h"
 #include "version.h"
+#ifdef MK_BRINGUP
+#include "bringup.h"
+#endif
 
 usb_ring_t usb_midi_from_host, usb_midi_to_host, usb_kbd_taps, usb_dev_events;
 volatile uint8_t usb_link_mounted;
@@ -192,6 +195,13 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_contro
 {
     if (stage != CONTROL_STAGE_SETUP)
         return true;
+#ifdef MK_BRINGUP
+    /* 0xB9 IN, bring-up builds: the bring-up log, record wValue (0..15), 256 bytes */
+    if (req->bmRequestType_bit.direction == TUSB_DIR_IN && req->bRequest == 0xB9) {
+        const uint8_t *r = bringup_record((uint8_t)req->wValue);
+        return r ? tud_control_xfer(rhport, req, (void *)(uintptr_t)r, BRINGUP_REC) : false;
+    }
+#endif
 #ifdef MK_DEV
     if (req->bmRequestType_bit.direction == TUSB_DIR_OUT && req->bRequest == 0xB8) {
         usb_ring_put(&usb_dev_events, req->wValue | (uint32_t)req->wIndex << 16);

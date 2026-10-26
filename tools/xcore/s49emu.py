@@ -612,7 +612,7 @@ class SpiFlash:
             a = (c[1] << 16 | c[2] << 8 | c[3]) + len(c) - (5 if c[0] == 0x0B else 4)
             self.queue(bytes(self.mem[a:a + 256]))
 
-    def xmos_layout(self, upgrade=None):
+    def xmos_layout(self, upgrade=None, factory=None):
         """Give the flash an XMOS boot layout like the S49's (fw notes xmos.md section 13), from
         our own test bytes: a boot loader whose word 0 is its size n (factory image at 4n + 8 =
         0x1000), a factory image built by ximage (two segments, about 80 KB), the upgrade image
@@ -623,7 +623,7 @@ class SpiFlash:
         for i in range(4, 4 * n + 8):
             self.mem[i] = i * 3 & 0xFF
         seg = lambda size, k: bytes((0x11 + i * 13 + k) & 0xFF for i in range(size))
-        fac = ximage.build([seg(0xB000, 0), seg(0x9000, 1)], ident=0x12345678)
+        fac = factory or ximage.build([seg(0xB000, 0), seg(0x9000, 1)], ident=0x12345678)
         self.mem[0x1000:0x1000 + len(fac)] = fac
         lo = 0x1000 + len(fac) + 4095 & ~4095
         if upgrade:
@@ -988,6 +988,58 @@ class UsbHost:
     def string(self, index):
         s = self.control(0x80, 6, 0x0300 | index, 0x0409, 255)
         return s[2:s[0]].decode('utf-16-le') if s else None
+
+
+def image_at(mem, a):
+    """The tile RAM images (tile 0, tile 1) of a valid xflash image at flash address a, or None:
+    magic, lengths, header CRC and segment CRCs checked."""
+    hdr = bytes(mem[a:a + 0x1C]).translate(ximage.REV8)
+    magic, _, crc, length, _, length2, n = struct.unpack('<7I', hdr)
+    if magic != ximage.MAGIC or length != length2 or not 0 < n < 8 or length % 4 or length > 0x30000:
+        return None
+    d = bytes(mem[a:a + length]).translate(ximage.REV8)
+    words = struct.unpack_from('<%dI' % ((length - 0x10) // 4), d, 0x10)
+    if ~ximage.step(ximage.crc_words(words), 0) & 0xFFFFFFFF != crc:
+        return None
+    tiles = {}
+    for k in range(n):
+        off, flags, size = struct.unpack_from('<3I', d, 0x1C + 12 * k)
+        seg = d[off:off + 4 * size]
+        if ximage.seg_crc(seg[:-4]) != struct.unpack_from('<I', seg, len(seg) - 4)[0]:
+            return None
+        tiles[0 if flags >> 16 == 0x8000 else 1] = seg[:-4]
+    return tiles.get(0), tiles.get(1)
+
+
+def boot_images(mem):
+    """What the boot loader starts from this flash, as far as fw notes xmos.md sections 3, 4
+    and 13 describe it (not a model of the loader's code): an upgrade image in a sector after
+    the factory image when it checks out, else the factory image. ((tile 0, tile 1), 'upgrade'
+    or 'factory'), or (None, None)."""
+    n = struct.unpack('<I', bytes(mem[0:4]).translate(ximage.REV8))[0]
+    f = 4 * n + 8
+    fac = image_at(mem, f) if 8 <= f < 0x10000 else None
+    if not fac:
+        return None, None
+    flen = struct.unpack('<I', bytes(mem[f + 12:f + 16]).translate(ximage.REV8))[0]
+    for a in range(f + flen + 4095 & ~4095, 0x4C000, 4096):
+        up = image_at(mem, a)
+        if up:
+            return up, 'upgrade'
+    return fac, 'factory'
+
+
+def stack_blocks(map_path):
+    """[(address, size, 'object:symbol')] of the bss blocks in a map (thread stacks among them)."""
+    blocks, sec = [], None
+    for line in open(map_path):
+        if not line.startswith(' '):
+            sec = line.split(':')[0].strip()
+            continue
+        p = line.split()
+        if sec.startswith('blocks') and len(p) >= 6 and p[2] == 'bss':
+            blocks.append((int(p[0], 16), int(p[1]), '%s:%s' % (p[3], p[5].replace('.data', ''))))
+    return blocks
 
 
 def stack_use(tile, map_path):

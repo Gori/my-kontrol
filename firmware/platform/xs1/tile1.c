@@ -26,6 +26,7 @@
 #include "link.h"
 #include "spi_flash.h"
 #include "tile1_dfu.h"
+#include "bringup.h"
 #include "upgrade.h"
 #include "usb_link.h"
 #include "usb_ulpi.h"
@@ -159,6 +160,107 @@ void usb_link_notify(void)
     }
 }
 
+#ifdef MK_BRINGUP
+/* ---------- USB bring-up builds (bringup.h) ---------- */
+
+bringup_diag_t bringup_diag;
+static uint8_t blog[4096];              /* the log sector, as at start, plus what we add */
+static uint32_t btmr, boot_t, tx_out;
+static volatile uint8_t ever_mounted, revert_due;
+
+void bringup_start(void)
+{
+    btmr = xs1_getr(RES_TIMER);
+    boot_t = xs1_time(btmr);
+    spi_flash_read(&spi, BRINGUP_LOG, blog, sizeof blog);
+}
+
+int bringup_due(void)                   /* the USB thread */
+{
+    if (usb_link_mounted) {
+        ever_mounted = 1;
+        bringup_diag.flags |= 8;
+    }
+    if (!ever_mounted && !revert_due && xs1_time(btmr) - boot_t >= BRINGUP_MS * TICKS_PER_MS)
+        revert_due = 1;
+    return revert_due;
+}
+
+const uint8_t *bringup_record(uint8_t slot)
+{
+    return slot < sizeof blog / BRINGUP_REC ? blog + slot * BRINGUP_REC : 0;
+}
+
+static uint32_t rec_word(const uint8_t *p)
+{
+    return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* the newest record out on the 5-pin OUT: F0 7D 4D 4B 40 <every byte as 2 nibbles> F7 */
+void bringup_report(void)
+{
+    const uint8_t *best = 0;
+    for (const uint8_t *r = blog; r < blog + sizeof blog; r += BRINGUP_REC)
+        if (rec_word(r) == BRINGUP_MAGIC &&
+            (!best || (int16_t)((r[6] | r[7] << 8) - (best[6] | best[7] << 8)) > 0))
+            best = r;
+    if (!best)
+        return;
+    static const uint8_t head[5] = {0xF0, 0x7D, 0x4D, 0x4B, 0x40};
+    for (int i = 0; i < 5; i++)
+        xs1_outt(tx_out, head[i]);
+    for (unsigned i = 0; i < sizeof(bringup_diag_t); i++) {
+        xs1_outt(tx_out, best[i] >> 4);
+        xs1_outt(tx_out, best[i] & 15);
+    }
+    xs1_outt(tx_out, 0xF7);
+}
+
+/* no host in BRINGUP_MS: the record, then what LINK_SYS_FACTORY does */
+void bringup_revert(void)
+{
+    uint32_t slot = 0, seq = 0;
+    for (; slot < sizeof blog / BRINGUP_REC && rec_word(blog + slot * BRINGUP_REC) != 0xFFFFFFFFu; slot++)
+        if (rec_word(blog + slot * BRINGUP_REC) == BRINGUP_MAGIC)
+            seq = blog[slot * BRINGUP_REC + 6] | blog[slot * BRINGUP_REC + 7] << 8;
+    if (slot == sizeof blog / BRINGUP_REC) {     /* full: start the sector over */
+        spi_flash_erase(&spi, flash_chip, BRINGUP_LOG);
+        for (unsigned i = 0; i < sizeof blog; i++)
+            blog[i] = 0xFF;
+        slot = 0;
+    }
+    bringup_diag.magic = BRINGUP_MAGIC;
+    bringup_diag.version = 1;
+    bringup_diag.seq = (uint16_t)(seq + 1);
+    bringup_diag.uptime_ms = (xs1_time(btmr) - boot_t) / TICKS_PER_MS;
+    const uint8_t *d = (const uint8_t *)&bringup_diag;
+    spi_flash_write(&spi, flash_chip, BRINGUP_LOG + slot * BRINGUP_REC, d, sizeof bringup_diag);
+    spi_flash_read(&spi, BRINGUP_LOG + slot * BRINGUP_REC, blog + slot * BRINGUP_REC, sizeof bringup_diag);
+    bringup_report();
+    xs1_wait_until(btmr, xs1_time(btmr) + 100 * TICKS_PER_MS);   /* the 5-pin bytes go out */
+    upgrade_revert(&spi, flash_chip);
+    reboot(0);
+}
+
+/* main's wait: the 20 s are counted here as well, on main's own timer, so a USB thread
+   stuck on the PHY (a wait in usb_ulpi.c that never ends, the DCD's full queue) still
+   leads to the revert. 3 = only the time passed (host came meanwhile): wait again. tmr is
+   main's own timer: a time condition on btmr would block the USB thread's reads of it. */
+static int bringup_wait3(uint32_t a, uint32_t b, uint32_t c, uint32_t tmr)
+{
+    if (usb_link_mounted)
+        ever_mounted = 1;
+    if (ever_mounted)
+        return xs1_wait3(a, b, c);
+    int w = xs1_wait3_until(a, b, c, tmr, boot_t + BRINGUP_MS * TICKS_PER_MS);
+    if (usb_link_mounted)
+        ever_mounted = 1;
+    if (w == 3 && !ever_mounted)
+        bringup_revert();
+    return w;
+}
+#endif
+
 static void usb_loop(uint32_t dcd, int dfu)
 {
     usb_dcd_bind_channel(dcd);
@@ -168,6 +270,10 @@ static void usb_loop(uint32_t dcd, int dfu)
         if (xs1_wait_chan_until(dcd, tmr, xs1_time(tmr) + TICKS_PER_MS) == 0)
             usb_dcd_pump();
         usb_link_task();
+#ifdef MK_BRINGUP
+        if (!dfu && !revert_due && bringup_due())
+            usb_link_notify();          /* main reverts */
+#endif
     }
 }
 
@@ -261,10 +367,21 @@ int main(void)
     xs1_thread_start(din_rx, rx_end, rx_stack, sizeof rx_stack / 4);
     p[0] = 0;
     link_send(link, LINK_USB_STATE, p, 1);
+#ifdef MK_BRINGUP
+    tx_out = tx_main;
+    bringup_start();
+    bringup_report();                   /* the last try's record, on the 5-pin OUT */
+#endif
     xs1_thread_start(usb_thread, usb_start(), usb_stack, sizeof usb_stack / 4);
 
     for (;;) {
+#ifdef MK_BRINGUP
+        int w = bringup_wait3(link, rx_main, note_rx, tmr);
+        if (w == 3)
+            continue;
+#else
         int w = xs1_wait3(link, rx_main, note_rx);
+#endif
         if (w == 1) {
             n = 0;
             do                                  /* what the RX thread has, in one packet */
@@ -275,6 +392,10 @@ int main(void)
         }
         if (w == 2) {
             (void)xs1_int(note_rx);
+#ifdef MK_BRINGUP
+            if (revert_due)
+                bringup_revert();
+#endif
             to_tile0(link, p);
             continue;
         }

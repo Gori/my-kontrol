@@ -19,9 +19,11 @@ standalone (~2 min) the S49 firmware as a standalone instrument on the harness: 
            cycle, the watchdog, safe mode after 3 unstable starts, the update-mode combo
 usb        (~4 min) tile 1's USB above the wire with a host model in place of the SIE thread:
            enumeration, MIDI, update mode, a DFU download and upload, the factory combo
-hybrid     (~3 min, needs NI's image locally; skipped without it) our tile 0 next to NI's
+hybrid     (~7 min, needs NI's image locally; skipped without it) our tile 0 next to NI's
            tile 1 on the board model: start-up, the probe in and out through NI's 5-pin MIDI,
            the update-mode start
+bringup    (~8 min) the USB bring-up build: absent from the others; no host for 20 s ->
+           record, revert, the factory image boots; a host in time -> no revert
 emu        (not in the default set, ~1 min) run NI's S49 image on the s49emu board model: LCD
            init sequence, standalone display text, a key press giving a note on DIN MIDI OUT
 """
@@ -30,7 +32,7 @@ import glob, os, struct, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
-import xdis, xas, xcc
+import xdis, xas, xcc, xsim
 
 NI = os.path.join(ROOT, 'fw', 'kks', 's49_xmos_120.bin')
 FW = os.path.join(ROOT, 'firmware')
@@ -642,6 +644,48 @@ def test_usb():
     return not fails and stacks_ok
 
 
+def hybrid_case(case, update):
+    """One hybrid run for test_hybrid (a module function, for the process pool): our hybrid
+    tile 0 (or NI's, case 'ni') next to NI's tile 1, NI's update-mode flag set or not, with
+    a fault injected: 'board_init' (main hangs on entering it), 'main_hang' (main waits for
+    good from 2.5 s), 'main_trap' (main takes an exception at 2.5 s: on XS1 that parks the
+    thread in the kernel entry, _trap), 'burst' (2 s of random 5-pin input and touch values,
+    for the probe's heaviest output). Returns (stop reason, NI tile 1's threads at the end,
+    displays 1-2, desync count, tile 0 stacks)."""
+    import random, s49emu
+    ni = s49emu.load_image(NI)
+    b0 = os.path.join(FW, 'build', 's49-hybrid-dev')
+    ours = case != 'ni'
+    syms = xsim.read_map(os.path.join(b0, 'tile0.map')) if ours else None
+    b = s49emu.Board(open(os.path.join(b0, 'tile0.bin'), 'rb').read() if ours else ni[0], ni[1], ui_syms=syms)
+    if update:
+        struct.pack_into('<I', b.usb.ram, 0x1C3B4 - 0x10000, 0x11042011)   # NI's DFU flag
+
+    def divert(sym, target):            # main thread only: it goes to target instead
+        pc = syms[sym]
+        b.ui.hooks[pc] = lambda t: syms[target] if t.num == 0 else pc
+    if case == 'board_init':
+        divert('board_init', '_exit')
+    rnd, until = random.Random(1), 2000 if update else 5000
+    for t in range(100, until + 1, 100):
+        if t == 2500 and case == 'main_hang':
+            divert('hal_idle', '_exit')
+        if t == 2500 and case == 'main_trap':
+            divert('app_poll', '_trap')
+        if case == 'burst' and t <= 3000:
+            b.din_in.send(bytes(rnd.choice([0x90, 0x80, 0xB0, 0xF8, 0xF0, 0x40, 0x7F, 0x10, 0xF7])
+                                for _ in range(40)), b.sys.now)
+            b.touch[rnd.randrange(48)] = rnd.randrange(-2000, 2000)
+        why = b.run_ms(t)
+        if why != 'time limit':
+            break
+    final = sorted((x.num, x.state, x.pc) for x in b.usb.threads if x.state != 'free')
+    disp = [b.lcd.text(d)[:2] for d in range(2)]
+    desync = struct.unpack_from('<I', b.ui.ram, syms['ni_desync'] - 0x10000)[0] if ours else 0
+    stacks = s49emu.stack_use(b.ui, os.path.join(b0, 'tile0.map')) if ours else []
+    return why, final, disp, desync, stacks
+
+
 def test_hybrid():
     """The hybrid bring-up image on the board model: our tile 0 (make BOARD=s49 HYBRID=1
     DEV=1, platform/xs1/ni_link.c and the probe) next to NI's tile 1 (segment 1 of NI's
@@ -703,22 +747,120 @@ def test_hybrid():
     check('every tile 0 stack keeps %d bytes free' % STACK_MARGIN, all(a - u >= STACK_MARGIN for _, a, u in use),
           [(n, a - u) for n, a, u in use if a - u < STACK_MARGIN])
 
-    def update_mode(t0):
-        bb = s49emu.Board(t0, ni[1])
-        struct.pack_into('<I', bb.usb.ram, 0x1C3B4 - 0x10000, 0x11042011)   # NI's DFU flag
-        why = bb.run_ms(1000)
-        return why, sorted((t.num, t.state, t.pc) for t in bb.usb.threads if t.state != 'free')
-    w1, nis = update_mode(ni[0])
-    w2, mine = update_mode(ours)
-    check('update mode: NI\'s tile 1 waits where it does next to NI\'s tile 0', w1 == w2 == 'time limit' and
-          [(x, y) for x, y, _ in nis] == [(x, y) for x, y, _ in mine] and
-          [p for _, s, p in nis if s == 'wait'] == [p for _, s, p in mine if s == 'wait'], (nis, mine))
+    # faults on our side and a burst of 5-pin input, in normal and update mode, next to NI's
+    # tile 1 and, for comparison, next to NI's own tile 0 (in parallel: about 5 minutes)
+    from concurrent.futures import ProcessPoolExecutor
+    cases = [(c, u) for c in ('ni', 'none', 'board_init', 'main_hang', 'main_trap', 'burst') for u in (0, 1)]
+    with ProcessPoolExecutor(len(cases)) as ex:
+        res = {(c, u): r for (c, u), r in zip(cases, ex.map(hybrid_case, *zip(*cases)))}
+    waits = lambda smp: [(n, st, pc if st == 'wait' else None) for n, st, pc in smp]
+    for (c, u), (why, final, disp, desync, stacks) in sorted(res.items()):
+        if c == 'ni':
+            continue
+        mode = 'update mode' if u else 'normal'
+        check('%s, %s: runs on' % (c, mode), why == 'time limit', why)
+        check('%s, %s: NI\'s tile 1 ends as next to NI\'s tile 0' % (c, mode),
+              waits(final) == waits(res[('ni', u)][1]), (final, res[('ni', u)][1]))
+        if u:
+            check('%s, update mode: the core stops' % c, c == 'board_init' or disp[0][0].startswith('UPDAT'), disp)
+        elif c in ('main_hang', 'main_trap'):
+            check('%s: the watchdog stops the core, no reboot' % c, disp[0][0] == 'WATCHDOG', disp)
+        bad = [(nm, a - us) for nm, a, us in stacks if a - us < STACK_MARGIN]
+        check('%s, %s: every tile 0 stack keeps %d bytes free' % (c, mode, STACK_MARGIN), not bad, bad)
+    worst = {}
+    for (c, u), r in res.items():
+        for nm, a, us in r[4]:
+            worst[nm.split(':')[-1]] = min(worst.get(nm.split(':')[-1], a), a - us)
+    print('hybrid: least free per stack over the fault and burst runs: ' +
+          ', '.join('%s %d' % kv for kv in sorted(worst.items())))
     for f in fails:
         print('hybrid: FAILED ' + f)
     print('hybrid: our tile 0 next to NI\'s tile 1 (board model, no USB): %d of %d checks passed '
-          '(start-up, probe out, key to 5-pin, probe command in, LED walk, update-mode start)'
-          % (n[0] - len(fails), n[0]))
+          '(start-up, probe out, key to 5-pin, probe command in, LED walk; board_init hang, main '
+          'hang, main trap, 5-pin burst in normal and update mode)' % (n[0] - len(fails), n[0]))
     return not fails
+
+
+def test_bringup():
+    """The USB bring-up build (make BOARD=s49 DEV=1 BRINGUP=1, platform/xs1/bringup.h).
+    First: the release, developer and hybrid builds carry none of it (no bringup symbol in
+    their maps, no record magic "MKBU" in their images). Then on the board model, with its
+    image as the upgrade image of an XMOS flash layout (factory image: NI's 1.2.0 file as a
+    stand-in when present locally, else our test image) and restarts starting what the boot
+    loader would: no host for 20 s gives a record at 0xF5000 and its 5-pin report, the
+    upgrade image removed and a reboot into the factory image; a host that configures the
+    device in time leaves the image alone."""
+    import s49run, ximage, s49emu
+    ok = True
+    for args, d in ((['BOARD=s49'], 's49'), (['BOARD=s49', 'DEV=1'], 's49-dev'),
+                    (['BOARD=s49', 'HYBRID=1', 'DEV=1'], 's49-hybrid-dev'),
+                    (['BOARD=s49', 'BRINGUP=1', 'DEV=1'], 's49-bringup-dev')):
+        r = subprocess.run(['make', '-C', FW, '-j8'] + args, capture_output=True, text=True)
+        if r.returncode:
+            print('bringup: FAILED to build %s\n%s' % (' '.join(args), r.stdout[-1500:] + r.stderr[-1500:]))
+            return False
+        found = []
+        for t in ('tile0', 'tile1'):
+            syms = xsim.read_map(os.path.join(FW, 'build', d, t + '.map'))
+            found += [k for k in syms if k.startswith('bringup_')]
+            if b'MKBU' in open(os.path.join(FW, 'build', d, t + '.bin'), 'rb').read():
+                found.append(t + ': MKBU')
+        want = d == 's49-bringup-dev'
+        if bool(found) != want:
+            ok = False
+            print('bringup: FAILED %s: %s' % (d, found or 'no bring-up code in the bring-up build'))
+    print('bringup: release, developer and hybrid builds: no bring-up code%s' % ('' if ok else ' (FAILED)'))
+    b = os.path.join(FW, 'build', 's49-bringup-dev')
+    t0, t1 = (open(os.path.join(b, n), 'rb').read() for n in ('tile0.bin', 'tile1.bin'))
+    tmp = tempfile.mkdtemp()
+    up = os.path.join(tmp, 'bringup.bin')
+    open(up, 'wb').write(ximage.build([t0, t1], ident=2))
+    layout = 'flash-layout %s%s' % (up, ' ' + NI if os.path.exists(NI) else '')
+    fails, n = [], [0]
+
+    def check(what, cond, got):
+        n[0] += 1
+        if not cond:
+            fails.append('%s: %s' % (what, got))
+
+    for host in (False, True, 'stuck'):
+        h = s49run.Harness(t0, t1, os.path.join(b, 'tile0.map'), os.path.join(b, 'tile1.map'))
+        slot = int(h.command(layout)[0].split()[2].split('-')[0], 16)
+        h.command('boot-flash')
+        o = h.command('tick 1500')
+        if host == 'stuck':                 # the USB thread never comes back (a PHY that
+            h.command('hang 1 usb_stack')   # does not answer): main still counts the 20 s
+            host = False
+        elif host:
+            o += h.command('usb-enum')
+        o += h.command('tick 20500')
+        fl = h.b.flash
+        rec = bytes(fl.mem[0xF5000:0xF5000 + 72])
+        resets = [x for x in o if x.startswith('reset at')]
+        if not host:
+            at = float(resets[0].split()[2]) if resets else 0
+            check('no host: reboot at 20 s', len(resets) == 1 and 20000 <= at <= 20200, resets)
+            check('no host: a record at 0xF5000', rec[:4] == b'MKBU' and rec[6] == 1, rec[:16].hex())
+            sys.path.insert(0, os.path.join(ROOT, 'tools'))
+            import s49bringup
+            txt = s49bringup.decode(bytes(fl.mem[0xF5000:0xF5000 + 256])) or ''
+            check('no host: the record decodes, nothing seen on USB, ~20 s up',
+                  'USB: nothing seen' in txt and '20.0 s after start' in txt, txt)
+            check('no host: the upgrade image removed', bytes(fl.mem[slot:slot + 4096]) == b'\xff' * 4096, '')
+            check('no host: the record on the 5-pin OUT', any('F0 7D 4D 4B 40' in x for x in o), '')
+            check('no host: the factory image boots', h.booted == 'factory', h.booted)
+            if os.path.exists(NI):
+                o = h.command('tick 3500')
+                d = [x.split('|')[1:3] for x in h.command('screen')[1:-1]]
+                check('NI\'s firmware (the factory stand-in) runs', d[0] == ['     1/2', ' FACTORY'], d[0])
+        else:
+            check('host: no revert', not resets and rec == b'\xff' * 72, (resets, rec[:8].hex()))
+            check('host: the image stays', s49emu.image_at(fl.mem, slot) is not None, '')
+    for f in fails:
+        print('bringup: FAILED ' + f)
+    print('bringup: no host for 20 s -> record, revert, factory image; host -> nothing: %d of %d checks passed'
+          % (n[0] - len(fails), n[0]))
+    return ok and not fails
 
 
 def test_emu():
@@ -744,8 +886,8 @@ def test_emu():
 
 
 TESTS = {'roundtrip': test_roundtrip, 'core': test_core, 'image': test_image, 'sim': test_sim,
-         's49': test_s49, 'fw': test_fw, 'standalone': test_standalone, 'usb': test_usb, 'hybrid': test_hybrid, 'emu': test_emu}
-DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw', 'standalone', 'usb', 'hybrid']
+         's49': test_s49, 'fw': test_fw, 'standalone': test_standalone, 'usb': test_usb, 'hybrid': test_hybrid, 'bringup': test_bringup, 'emu': test_emu}
+DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw', 'standalone', 'usb', 'hybrid', 'bringup']
 
 
 if __name__ == '__main__':
