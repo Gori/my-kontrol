@@ -11,7 +11,10 @@
 
 /* ---------- out ---------- */
 
-#define QLEN 256                     /* packets, power of two */
+#ifndef BOARD_MIDI_QLEN
+#define BOARD_MIDI_QLEN 256
+#endif
+#define QLEN BOARD_MIDI_QLEN         /* packets, power of two */
 
 static uint8_t q[QLEN][4];
 static uint16_t q_head, q_tail;

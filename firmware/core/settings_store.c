@@ -89,6 +89,110 @@ static int write_record(uintptr_t addr, const record_t *rec)
     return hal_flash_write(addr, buf, REC_SIZE);
 }
 
+#ifdef BOARD_FLASH_READ
+/* ---------- flash read by copy (BOARD_FLASH_READ) ----------
+
+   On a board whose flash is not in the address space (the S MK1: the SPI flash hangs off
+   the other XS1 tile) every read is a copy through hal_flash_read(), and the preset block's
+   check (a CRC over 8 slots) is done once and remembered until the next preset save. The
+   flash layout is the same as above. */
+
+static void rd(uintptr_t a, void *p, uint32_t n)
+{
+    hal_flash_read(a, p, n);
+}
+
+/* ---------- settings log ---------- */
+
+/* Scan one page: the newest valid record into *best (1 = found) and the first free offset. */
+static int scan(uintptr_t page, uint32_t *free_off, record_t *best)
+{
+    record_t r;
+    int found = 0;
+    uint32_t off = 0;
+    for (; off + REC_SIZE <= FLASH_PAGE; off += REC_SIZE) {
+        rd(page + off, &r, sizeof r);
+        if (r.magic == 0xFFFFFFFF)
+            break;
+        if (valid(&r) && (!found || (int16_t)(r.seq - best->seq) > 0)) {
+            *best = r;
+            found = 1;
+        }
+    }
+    /* leftovers from other firmware: a tail that is not erased makes the page full */
+    uint32_t w[16];
+    for (uint32_t i = off; i < FLASH_PAGE; i += sizeof w) {
+        uint32_t n = FLASH_PAGE - i < sizeof w ? FLASH_PAGE - i : sizeof w;
+        rd(page + i, w, n);
+        for (uint32_t k = 0; k < n / 4; k++)
+            if (w[k] != 0xFFFFFFFF) {
+                *free_off = FLASH_PAGE;
+                return found;
+            }
+    }
+    *free_off = off;
+    return found;
+}
+
+void settings_load(void)
+{
+    uint32_t fa, fb;
+    record_t a, b;
+    int ha = scan(FLASH_SETTINGS_A, &fa, &a), hb = scan(FLASH_SETTINGS_B, &fb, &b);
+    const record_t *r = ha ? &a : 0;
+    cur_page = FLASH_SETTINGS_A;
+    next_off = fa;
+    if (hb && (!ha || (int16_t)(b.seq - a.seq) > 0)) {
+        r = &b;
+        cur_page = FLASH_SETTINGS_B;
+        next_off = fb;
+    }
+    if (r) {
+        settings = r->data;
+        seq = r->seq;
+    } else {
+        settings_defaults(&settings);
+        seq = 0;
+    }
+    settings_sanitize(&settings);
+}
+
+static int same_as_saved(void)
+{
+    uint32_t dummy;
+    record_t last;
+    if (!scan(cur_page, &dummy, &last) || last.seq != seq)
+        return 0;
+    const uint8_t *x = (const uint8_t *)&last.data, *y = (const uint8_t *)&settings;
+    for (unsigned i = 0; i < sizeof settings; i++)
+        if (x[i] != y[i])
+            return 0;
+    return 1;
+}
+
+int settings_save_now(void)
+{
+    save_delay_ms = 0;
+    if (same_as_saved())
+        return 0;
+    if (next_off + REC_SIZE > FLASH_PAGE) {
+        cur_page = cur_page == FLASH_SETTINGS_A ? FLASH_SETTINGS_B : FLASH_SETTINGS_A;
+        if (hal_flash_erase(cur_page))
+            return -1;
+        next_off = 0;
+    }
+    record_t rec, back;
+    make_record(&rec, seq + 1);
+    int r = write_record(cur_page + next_off, &rec);
+    rd(cur_page + next_off, &back, sizeof back);
+    next_off += REC_SIZE;
+    if (r || !valid(&back))
+        return -1;
+    seq++;
+    return 0;
+}
+
+#else
 /* ---------- settings log ---------- */
 
 /* Scan one page: newest valid record (or 0) and the first free offset. */
@@ -170,6 +274,8 @@ int settings_save_now(void)
     return 0;
 }
 
+#endif
+
 void settings_touch(void)
 {
     save_delay_ms = SAVE_DELAY_MS;
@@ -195,6 +301,103 @@ void settings_tick_ms(uint32_t ms, int idle)
     settings_save_now();
 }
 
+#ifdef BOARD_FLASH_READ
+/* ---------- presets ---------- */
+
+static uintptr_t pp;                     /* the valid preset block's page, 0 = none */
+static uint8_t pp_known, pp_used;        /* pp worked out; which slots hold a valid record */
+
+static int block_valid(uintptr_t page, preset_hdr_t *h)
+{
+    uint8_t buf[REC_SIZE];
+    rd(page, h, sizeof *h);
+    if (h->magic != PRESET_MAGIC || h->version != SETTINGS_VERSION)
+        return 0;
+    uint32_t crc = 0xFFFFFFFF;
+    for (int i = 0; i < PRESETS; i++) {
+        rd(SLOT(page, i), buf, REC_SIZE);
+        crc = crc32_update(crc, buf, REC_SIZE);
+    }
+    return h->crc == ~crc;
+}
+
+static uintptr_t preset_page(void)
+{
+    if (!pp_known) {
+        preset_hdr_t ha, hb;
+        int a = block_valid(FLASH_PRESETS_A, &ha), b = block_valid(FLASH_PRESETS_B, &hb);
+        pp = a && b ? ((int16_t)(hb.seq - ha.seq) > 0 ? FLASH_PRESETS_B : FLASH_PRESETS_A)
+                    : a ? FLASH_PRESETS_A : b ? FLASH_PRESETS_B : 0;
+        pp_used = 0;
+        for (int i = 0; pp && i < PRESETS; i++) {
+            record_t r;
+            rd(SLOT(pp, i), &r, sizeof r);
+            if (valid(&r))
+                pp_used |= (uint8_t)(1u << i);
+        }
+        pp_known = 1;
+    }
+    return pp;
+}
+
+int presets_used(int slot)
+{
+    return slot >= 0 && slot < PRESETS && preset_page() && (pp_used >> slot & 1);
+}
+
+int presets_load(int slot)
+{
+    record_t r;
+    if (!presets_used(slot))
+        return -1;
+    rd(SLOT(pp, slot), &r, sizeof r);
+    if (!valid(&r))
+        return -1;
+    settings = r.data;
+    settings_sanitize(&settings);
+    return 0;
+}
+
+int presets_save(int slot)
+{
+    if (slot < 0 || slot >= PRESETS)
+        return -1;
+    uintptr_t old = preset_page();
+    uintptr_t page = old == FLASH_PRESETS_A ? FLASH_PRESETS_B : FLASH_PRESETS_A;
+    preset_hdr_t oh;
+    if (old)
+        rd(old, &oh, sizeof oh);
+    uint16_t s = old ? oh.seq + 1 : 1;
+    pp_known = 0;
+    if (hal_flash_erase(page))
+        return -1;
+
+    /* slots first, copying the others from the previous block */
+    uint32_t crc = 0xFFFFFFFF;
+    for (int i = 0; i < PRESETS; i++) {
+        record_t rec;
+        if (i == slot) {
+            make_record(&rec, 0);
+        } else if (old && (rd(SLOT(old, i), &rec, sizeof rec), valid(&rec))) {
+            /* copied */
+        } else {
+            uint8_t *p = (uint8_t *)&rec;
+            for (unsigned k = 0; k < sizeof rec; k++)
+                p[k] = 0xFF;
+        }
+        if (write_record(SLOT(page, i), &rec))
+            return -1;
+        uint8_t buf[REC_SIZE];
+        rd(SLOT(page, i), buf, REC_SIZE);
+        crc = crc32_update(crc, buf, REC_SIZE);
+    }
+    preset_hdr_t h = {PRESET_MAGIC, SETTINGS_VERSION, s, ~crc, 0xFFFFFFFF};
+    if (hal_flash_write(page, &h, sizeof h))
+        return -1;
+    pp_known = 0;
+    return presets_used(slot) ? 0 : -1;
+}
+#else
 /* ---------- presets ---------- */
 
 static int block_valid(uintptr_t page)
@@ -272,3 +475,4 @@ int presets_save(int slot)
         return -1;
     return presets_used(slot) ? 0 : -1;
 }
+#endif

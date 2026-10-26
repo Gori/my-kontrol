@@ -36,6 +36,11 @@ static int in_flash(uintptr_t a, uint32_t n)
     return a >= (uintptr_t)fake_flash && a + n <= (uintptr_t)fake_flash + sizeof fake_flash;
 }
 
+void hal_flash_read(uintptr_t addr, void *dst, uint32_t n)
+{
+    memcpy(dst, (const void *)addr, n);
+}
+
 int hal_flash_erase(uintptr_t addr)
 {
     if (!in_flash(addr, FLASH_PAGE) || (addr - (uintptr_t)fake_flash) % FLASH_PAGE)

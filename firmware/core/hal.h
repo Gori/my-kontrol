@@ -103,6 +103,8 @@ void hal_delay_ms(uint32_t ms);    /* busy wait, feeds the watchdog */
 void hal_watchdog_feed(void);
 int hal_flash_erase(uintptr_t addr);                              /* one page; 0 = ok */
 int hal_flash_write(uintptr_t addr, const void *src, uint32_t len);  /* 0 = ok */
+/* boards with BOARD_FLASH_READ (flash not in the address space): the store reads by copy */
+void hal_flash_read(uintptr_t addr, void *dst, uint32_t n);
 void hal_unique_id(uint8_t out[12]);
 void hal_usb_init(void);           /* clock and reset the USB peripheral */
 void hal_tick_start(void);         /* starts the 100 us tick that calls board_tick() */

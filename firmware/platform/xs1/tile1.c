@@ -41,7 +41,7 @@
 #define DFU_FLAG ((volatile uint32_t *)0x1C3B4)
 #define DFU_MAGIC 0x4D4B4446u            /* "MKDF" */
 
-static uint32_t tx_stack[64], rx_stack[64], sie_stack[160], usb_stack[320];
+static uint32_t tx_stack[148], rx_stack[148], sie_stack[160], usb_stack[320];   /* 512 free (xtest) */
 
 /* ---------- 5-pin MIDI ---------- */
 
@@ -231,7 +231,7 @@ int main(void)
 {
     static uint8_t p[LINK_MAX + 1];
     uint32_t n;
-    uint32_t link = xs1_getr(RES_CHANEND);    /* first: chanend 0 = LINK_TILE1 */
+    uint32_t link = xs1_chanend0;             /* chanend 0 (crt0.s) = LINK_TILE1 */
     uint32_t tmr = xs1_getr(RES_TIMER);
     xs1_setd(link, LINK_TILE0);
     int dfu = *DFU_FLAG == DFU_MAGIC;

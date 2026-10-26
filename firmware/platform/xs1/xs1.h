@@ -53,6 +53,15 @@ static inline uint32_t xs1_inct(uint32_t c)
     asm volatile("inct %0, res[%1]" : "=r"(v) : "r"(c) : "memory");
     return v;
 }
+extern uint32_t xs1_chanend0;           /* chanend 0, allocated first by crt0.s */
+
+/* 1 if the next token on c is a control token (waits for a token) */
+static inline int xs1_testct(uint32_t c)
+{
+    int r;
+    asm volatile("testct %0, res[%1]" : "=r"(r) : "r"(c) : "memory");
+    return r;
+}
 static inline void xs1_freer(uint32_t r) { asm volatile("freer res[%0]" :: "r"(r) : "memory"); }
 static inline void xs1_chkct(uint32_t c, uint32_t v) { asm volatile("chkct res[%0], %1" :: "r"(c), "r"(v) : "memory"); }
 

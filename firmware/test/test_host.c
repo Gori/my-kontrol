@@ -1,6 +1,9 @@
 /* Host tests for the host protocol, device side (host.c; docs/protocol.md). */
 #include <stdio.h>
 #include <string.h>
+#ifndef __xcore__
+#include <stdlib.h>
+#endif
 #include "fake_hal.h"
 #include "host.h"
 #include "midi.h"
@@ -42,11 +45,24 @@ static void reset(void)
     host_init(capture, notify);
 }
 
+/* HOST_CORPUS=file: every message sent to the keyboard is also written there, one per line
+   in hex (tools/xcore/xtest.py replays them into the firmware on the board model) */
+#ifndef __xcore__
+static FILE *corpus;
+#endif
+
 static void msg(uint8_t cmd, const uint8_t *d, int n)
 {
     uint8_t m[200] = {0xF0, 0x7D, 0x4D, 0x4B, cmd};
     memcpy(m + 5, d, n);
     m[5 + n] = 0xF7;
+#ifndef __xcore__
+    if (corpus) {
+        for (int i = 0; i < n + 6; i++)
+            fprintf(corpus, "%02x", m[i]);
+        fprintf(corpus, "\n");
+    }
+#endif
     CHECK(host_sysex(m, n + 6) == 1, "cmd %02x not taken", cmd);
 }
 
@@ -414,6 +430,11 @@ static void test_describe(void)
 
 int main(void)
 {
+#ifndef __xcore__                       /* (also built for xsim, without a file system) */
+    const char *cp = getenv("HOST_CORPUS");
+    if (cp)
+        corpus = fopen(cp, "w");
+#endif
     test_strings();
     test_handshake();
     test_pages();

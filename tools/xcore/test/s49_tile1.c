@@ -23,7 +23,7 @@ static void din_byte(uint8_t b)
 int main(void)
 {
     uint8_t p[256];
-    uint32_t n, link = getr(RES_CHANEND);       /* first: chanend 0 = LINK_TILE1 */
+    uint32_t n, link = xs1_chanend0;            /* chanend 0 (crt0.s) = LINK_TILE1 */
     uint32_t tmr = getr(RES_TIMER);
     setd(link, LINK_TILE0);
     setc(PORT_1J, SETC_INUSE_ON);

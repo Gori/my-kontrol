@@ -15,6 +15,7 @@
    each 24-bit group as NI's firmware addresses them (fw/kks/notes/xmos.md §8.3).
    Button and strip lights on chain C: which bit is which control is not known yet (TODO);
    ctl_bit below is empty, so board_light() does nothing until it is filled in. */
+#include <string.h>
 #include "panel.h"
 #include "shift595.h"
 #include "xs1.h"
@@ -33,14 +34,34 @@
 
 static uint8_t level_a[80], level_b[80], level_c[112];
 static uint8_t backlight = 127;
-static uint32_t ab_stack[48], c_stack[44];   /* 92 / 84 bytes used at most (emulator) */
+static uint32_t ab_stack[160], c_stack[160]; /* 84 / 76 bytes used at most; xtest wants 512 free */
 
 static const uint8_t group[24] = {6, 7, 5, 3, 4, 2, 0, 1, 15, 13, 14, 12, 10, 11, 9, 23, 8, 22,
                                   20, 21, 19, 17, 18, 16};
 
+#ifdef MK_PROBE
+static volatile uint8_t probe_on;
+
+/* the bring-up probe (probe.c): only this bit lit; chain -1 gives the lights back */
+void lights_probe(int chain, int bit)
+{
+    probe_on = chain >= 0;
+    memset(level_a, 0, sizeof level_a);
+    memset(level_b, 0, sizeof level_b);
+    memset(level_c, 0, sizeof level_c);
+    uint8_t *lv = chain == 0 ? level_a : chain == 1 ? level_b : level_c;
+    if (chain >= 0)
+        lv[bit] = 127;
+}
+#endif
+
 void lights_key(uint8_t key, uint8_t r, uint8_t g, uint8_t b)
 {
     uint8_t *lv, bit[3];
+#ifdef MK_PROBE
+    if (probe_on)
+        return;
+#endif
     if (key >= BOARD_GUIDE_KEYS)
         return;
     if (key == 48) {                    /* the 25th key of chain B */

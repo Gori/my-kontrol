@@ -26,6 +26,9 @@
 #include "panel.h"
 #include "ni_sensor.h"
 #include "xs1.h"
+#ifdef MK_PROBE
+#include "probe.h"
+#endif
 
 evq_t panel_events, sensor_events;
 uint16_t panel_dropped;
@@ -118,6 +121,9 @@ static void scan(void)
 {
     uint32_t v = read_registers();
     raw_bits = v;
+#ifdef MK_PROBE
+    probe_inputs(v);
+#endif
     hist[2] = hist[1], hist[1] = hist[0], hist[0] = v;
     encoder(v);                         /* the encoder is not debounced */
     if (scans < 3) {                    /* start-up: take the state, report nothing */
@@ -227,6 +233,10 @@ static void sensors(void)
     if (sensor_due(0)) {
         int ok = ni_sensor_poll(&i2c, NI_KNOBS_ADDR, r, NI_KNOBS_LEN) == 0;
         sensor_result(0, ok);
+#ifdef MK_PROBE
+        if (ok)
+            probe_sensor(0, r, NI_KNOBS_LEN);
+#endif
         if (ok) {
             ni_knobs_t k;
             ni_knobs_decode(r, &k);
@@ -243,6 +253,10 @@ static void sensors(void)
     if (sensor_due(1)) {
         int ok = ni_sensor_poll(&i2c, NI_TOUCH_ADDR, r, NI_TOUCH_LEN) == 0;
         sensor_result(1, ok);
+#ifdef MK_PROBE
+        if (ok)
+            probe_sensor(1, r, NI_TOUCH_LEN);
+#endif
         if (ok) {
             ni_touch_t t;
             ni_touch_decode(r, &t);
@@ -324,7 +338,7 @@ void panel_tick(void)
     scan();
 }
 
-static uint32_t sensor_stack[112];     /* 360 bytes used at most (emulator) */
+static uint32_t sensor_stack[228];     /* 356 bytes used at most; xtest wants 512 free */
 
 static void sensor_thread(uint32_t arg)
 {

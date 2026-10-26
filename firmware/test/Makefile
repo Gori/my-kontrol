@@ -8,10 +8,11 @@ CFLAGS = -g -std=gnu11 -Wall -Wextra -Wno-missing-field-initializers -fsanitize=
 BIN = build
 CORE = ../core
 
-all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0 $(BIN)/test_usb \
+all: $(BIN)/test_smartplay $(BIN)/test_core $(BIN)/test_core_rd $(BIN)/test_host $(BIN)/test_midi_din $(BIN)/test_midi_din0 $(BIN)/test_usb \
      $(BIN)/test_seg $(BIN)/test_panel $(BIN)/test_flash $(BIN)/test_upgrade $(BIN)/test_usbdev
 	$(BIN)/test_smartplay
 	$(BIN)/test_core
+	$(BIN)/test_core_rd
 	$(BIN)/test_host
 	$(BIN)/test_midi_din
 	$(BIN)/test_midi_din0
@@ -31,6 +32,11 @@ $(BIN)/test_smartplay: test_smartplay.c $(CORE)/smartplay.c | $(BIN)
 $(BIN)/test_core: test_core.c host/fake_hal.c $(CORE)/midi.c $(CORE)/play.c $(CORE)/smartplay.c \
                   $(CORE)/settings.c $(CORE)/settings_store.c | $(BIN)
 	$(CC) $(CFLAGS) $^ -o $@
+
+# the same with the settings store reading flash by copy (BOARD_FLASH_READ, the S MK1)
+$(BIN)/test_core_rd: test_core.c host/fake_hal.c $(CORE)/midi.c $(CORE)/play.c $(CORE)/smartplay.c \
+                     $(CORE)/settings.c $(CORE)/settings_store.c | $(BIN)
+	$(CC) $(CFLAGS) -DBOARD_FLASH_READ $^ -o $@
 
 $(BIN)/test_host: test_host.c host/fake_hal.c $(CORE)/host.c $(CORE)/mcu.c $(CORE)/midi.c | $(BIN)
 	$(CC) $(CFLAGS) $^ -o $@

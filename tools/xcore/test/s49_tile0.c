@@ -109,7 +109,7 @@ int main(void)
 {
     uint8_t p[256];
     uint32_t n;
-    uint32_t link = getr(RES_CHANEND);          /* first: chanend 0 = LINK_TILE0 */
+    uint32_t link = xs1_chanend0;               /* chanend 0 (crt0.s) = LINK_TILE0 */
     setd(link, LINK_TILE1);
     tmr = getr(RES_TIMER);
     lcd_init();

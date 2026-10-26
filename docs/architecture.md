@@ -124,8 +124,8 @@ Implemented (platform/xs1, boards/s-mk1):
   builds) injected events.
 - Tile 0: core/main.c with the HAL in `hal.c` (reference timer, a 100 µs tick thread, an
   optional `hal_idle()` that waits for link input or the next millisecond) and
-  `tile0_link.c` in place of usb/usb_device.c and TinyUSB. Settings flash is a 4 KB RAM
-  mirror written through to SPI flash on tile 1.
+  `tile0_link.c` in place of usb/usb_device.c and TinyUSB. Settings flash: the core's store
+  reads the SPI flash on tile 1 by copy (`BOARD_FLASH_READ`), erases and writes it by request.
 - Tile 1 (`tile1.c`): the link, the 5-pin UART (TX and RX threads) and the SPI flash
   (`drivers/spi_flash.c`: AT25DF081A or MX25L8006E by JEDEC ID, the protection bits cleared
   for each change and set again, nothing below 0x55000 ever erased or written, except the upgrade
@@ -154,6 +154,13 @@ Implemented (platform/xs1, boards/s-mk1):
   marked TODO in panel.c and lights.c: input bits other than pedals, encoder and page buttons
   (so the transport, encoder push, Back and Enter have their control IDs but no bits yet);
   button and strip light bits; touch nodes; knob resolution.
+- Packaging (`tools/xcore/s49pack.py`): an .xe from the two tile images (`tools/xcore/xe.py`,
+  `boards/s-mk1/s-mk1.xn`), then XMOS's xflash: the same path rebuilds NI's 1.2.0 images
+  byte for byte (except the page padding).
+- Hybrid bring-up image (`make BOARD=s49 HYBRID=1 DEV=1`, `platform/xs1/ni_link.c`): our
+  tile 0 next to NI's tile 1, speaking NI's tile link, so NI's USB and update path stay;
+  the probe (`boards/s-mk1/probe.c`, `tools/s49probe.py`) sends the raw panel state out of
+  NI's MIDI port and walks the LED bits.
 - `make BOARD=s49` builds both tile images (`build/s49/tile0.bin`, `tile1.bin`);
   `tools/xcore/s49run.py` runs them on the board emulator; `xtest.py standalone` plays a
   whole standalone session on it, `xtest.py usb` the USB device above the wire.

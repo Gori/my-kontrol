@@ -30,7 +30,8 @@ static inline void wait_until(uint32_t tmr, uint32_t t)
 /* tile link packets (contract: HostLink in tools/xcore/s49emu.py) */
 enum { LINK_USB_MIDI_TX = 0x81, LINK_DIN_TX,
        LINK_USB_STATE = 0x01, LINK_USB_MIDI_RX, LINK_DIN_RX };
-#define LINK_TILE0 0x80000002u      /* chanend 0 of each tile (allocated first in main) */
+extern uint32_t xs1_chanend0;    /* chanend 0, allocated by crt0.s (rt.c) */
+#define LINK_TILE0 0x80000002u      /* chanend 0 of each tile */
 #define LINK_TILE1 0x00000002u
 
 static inline void link_send(uint32_t c, uint32_t type, const uint8_t *p, uint32_t n)

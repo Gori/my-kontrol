@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Komplete Kontrol S-Series MK1: the XS1 chip (two XS1-L1A nodes in an XS1-L2A package,
+     XTC's own XS1 part names, in configs/.deprecated since XTC 15), for xflash to package
+     our tile images (tools/xcore/s49pack.py). Node 0 (routing id 0) boots from the SPI flash
+     and runs our tile 1 (USB, 5-pin, flash); node 1 (routing id 0x8000) is booted over the
+     link and runs our tile 0. Node 1 is first in the JTAG chain, so its image is the first
+     segment of the upgrade image, as in NI's. Ports: docs/hardware/s-mk1.md, Flash. -->
+<Network xmlns="http://www.xmos.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.xmos.com http://www.xmos.com" ManuallySpecifiedRouting="true">
+  <Type>Board</Type>
+  <Name>Komplete Kontrol S MK1</Name>
+  <Declarations>
+    <Declaration>tileref tile[2]</Declaration>
+  </Declarations>
+  <Packages>
+    <Package id="0" Type="XS1-L2A-QF124">
+      <Nodes>
+        <Node Id="0" InPackageId="0" Type="XS1-L1A" Oscillator="20MHz" SystemFrequency="500MHz" RoutingId="0">
+          <Boot>
+            <Source Location="SPI:bootFlash"/>
+            <Bootee NodeId="1"/>
+          </Boot>
+          <Tile Number="0" Reference="tile[1]">
+            <Port Location="XS1_PORT_1A" Name="PORT_SPI_SS"/>
+            <Port Location="XS1_PORT_1B" Name="PORT_SPI_CLK"/>
+            <Port Location="XS1_PORT_1C" Name="PORT_SPI_MISO"/>
+            <Port Location="XS1_PORT_1D" Name="PORT_SPI_MOSI"/>
+          </Tile>
+          <RoutingTable>
+            <Bits>
+              <Bit number="15" direction="1"/>
+            </Bits>
+            <Links>
+              <Link name="XLG" direction="1"/>
+            </Links>
+          </RoutingTable>
+        </Node>
+        <Node Id="1" InPackageId="1" Type="XS1-L1A" Oscillator="20MHz" SystemFrequency="500MHz" RoutingId="32768">
+          <Boot>
+            <Source Location="XMOSLINK"/>
+          </Boot>
+          <Tile Number="0" Reference="tile[0]"/>
+          <RoutingTable>
+            <Bits>
+              <Bit number="15" direction="1"/>
+            </Bits>
+            <Links>
+              <Link name="XLF" direction="1"/>
+            </Links>
+          </RoutingTable>
+        </Node>
+      </Nodes>
+      <Links>
+        <Link Encoding="5wire" Delays="0,1">
+          <LinkEndpoint NodeId="0" Link="XLG"/>
+          <LinkEndpoint NodeId="1" Link="XLF"/>
+        </Link>
+      </Links>
+    </Package>
+  </Packages>
+  <ExternalDevices>
+    <Device NodeId="0" Tile="0" Class="SPIFlash" Name="bootFlash" Type="AT25DF081A">
+      <Attribute Name="PORT_SPI_MISO" Value="PORT_SPI_MISO"/>
+      <Attribute Name="PORT_SPI_SS" Value="PORT_SPI_SS"/>
+      <Attribute Name="PORT_SPI_CLK" Value="PORT_SPI_CLK"/>
+      <Attribute Name="PORT_SPI_MOSI" Value="PORT_SPI_MOSI"/>
+    </Device>
+  </ExternalDevices>
+  <JTAGChain>
+    <JTAGDevice NodeId="1"/>
+    <JTAGDevice NodeId="0"/>
+  </JTAGChain>
+</Network>

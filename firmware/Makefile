@@ -2,6 +2,7 @@
 #   make                  release build for BOARD (default m32)
 #   make DEV=1            developer build: event injection over USB (tools/mktest.py)
 #   make BOARD=<name>     another keyboard, see docs/porting.md
+#   make BOARD=s49 HYBRID=1 DEV=1   S MK1 bring-up: tile 0 for NI's tile 1 (platform/xs1/ni_link.c)
 #   make test             host tests (no hardware)
 #   make sim              macOS simulator on CoreMIDI virtual ports (sim/README.md)
 # Dependencies: git submodules in lib/ (git submodule update --init), python3
@@ -17,7 +18,7 @@ include $(BOARD_DIR)/board.mk
 include platform/$(PLATFORM)/platform.mk
 BOARD_INCLUDES ?= -I$(BOARD_DIR)
 
-BUILD  = build/$(BOARD)$(if $(DEV),-dev)
+BUILD  = build/$(BOARD)$(if $(HYBRID),-hybrid)$(if $(DEV),-dev)
 TUSB   = lib/tinyusb/src
 
 # a platform without TinyUSB on the core's MCU (xs1: USB runs on the other tile) sets

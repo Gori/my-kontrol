@@ -20,7 +20,8 @@ order). After reversal, little-endian words:
   0x10 version (0)                 0x14 L again (the size libflash reads)
   0x18 segment count n             0x1C n x {file offset, flags, size in words incl. CRC}
 Each segment is a tile RAM image (loaded at the tile's RAM base) followed by one CRC word;
-after the last segment, zero padding to a 256-byte flash page.
+after the last segment, padding to a 256-byte flash page: 0 in NI's files, 0xFF from XTC
+15's xflash (not covered by any CRC; the loader reads L bytes).
 CRC step = XS1 `crc32 r, x, 0xEDB88320`: four bit-reflected CRC rounds with zero data, then
 xor the data word. Segment: r = step(~0, words - 1), then every payload word; the stored word
 is ~step(r, 0), so stepping it in gives 0xFFFFFFFF. Header CRC: the same from r = ~0 over the
@@ -121,8 +122,8 @@ def check(raw, extract=None):
     if end != length:
         bad('segments end at 0x%x, length says 0x%x' % (end, length))
     pad = d[length:]
-    if any(pad):
-        bad('padding after the image is not zero')
+    if pad.strip(b'\0') and pad.strip(b'\xff'):   # NI's images pad with 0, xflash 15 with 0xFF
+        bad('padding after the image is neither all 0 nor all 0xFF')
     if len(d) % PAGE:
         print('  note: file is not a multiple of %d bytes' % PAGE)
     print('valid' if ok else 'INVALID')

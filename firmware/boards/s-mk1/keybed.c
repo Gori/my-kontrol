@@ -5,6 +5,9 @@
 #include "panel.h"
 #include "ni_keybed.h"
 #include "xs1.h"
+#ifdef MK_PROBE
+#include "probe.h"
+#endif
 
 #define KB_RX     PORT_1('K')
 #define KB_ENABLE PORT_4('E')
@@ -12,7 +15,7 @@
 
 evq_t keybed_events;
 uint16_t keybed_dropped;
-static uint32_t stack[40];             /* 76 bytes used at most (emulator, xtest standalone) */
+static uint32_t stack[156];            /* 68 bytes used at most; xtest wants 512 free */
 
 static void keybed_thread(uint32_t arg)
 {
@@ -37,6 +40,10 @@ static void keybed_thread(uint32_t arg)
             else
                 stop = v;
         }
+#ifdef MK_PROBE
+        if (stop)
+            probe_keybed((uint8_t)b);
+#endif
         uint8_t note, on;
         uint16_t raw;
         if (stop && ni_keybed_byte(&k, (uint8_t)b, &note, &on, &raw)) {

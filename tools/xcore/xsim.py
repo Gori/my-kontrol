@@ -753,6 +753,7 @@ class Thread(Res):
         self.events = []
         self.res_ops = 0              # resource instructions executed (spin detection)
         self.snap = None
+        self.sp_top = self.min_sp = None   # stack top as set (set sp / init t[]:sp), lowest sp
 
     def spin(self, pc):
         """Called on a taken backward branch. Registers equal to the previous visit and no
@@ -1000,6 +1001,8 @@ def semantics(th, insn):
                 R[SP] = R[SP] - 4 * u & M
                 if R[SP] < tile.min_sp:
                     tile.min_sp = R[SP]
+                if th.min_sp is not None and R[SP] < th.min_sp:
+                    th.min_sp = R[SP]
             return nxt
         return f
     if n == 'EXTSP':
@@ -1007,6 +1010,8 @@ def semantics(th, insn):
             R[SP] = R[SP] - 4 * o[0] & M
             if R[SP] < tile.min_sp:
                 tile.min_sp = R[SP]
+            if th.min_sp is not None and R[SP] < th.min_sp:
+                th.min_sp = R[SP]
             return nxt
         return f
     if n == 'RETSP':
@@ -1102,6 +1107,8 @@ def semantics(th, insn):
                     raise SimError('%s exception at %s' % (n.lower(), tile.name(insn.addr)))
                 return nxt
             R[{'SETSP': SP, 'SETDP': DP, 'SETCP': CP}[n]] = R[r]
+            if n == 'SETSP':
+                th.sp_top = th.min_sp = R[r]
             return nxt
         return f
     if n == 'SETKEP':
@@ -1385,6 +1392,8 @@ def resource_semantics(th, insn, n, o, nxt, res):
                 t.pc = R[v]
             else:
                 t.R[reg] = R[v]
+                if reg == SP:
+                    t.sp_top = t.min_sp = R[v]
             return nxt
         return f
     if n == 'TSETR':

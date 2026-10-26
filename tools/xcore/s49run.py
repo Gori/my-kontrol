@@ -38,6 +38,9 @@ Commands (--stdio, one per line; blank lines and # comments are skipped):
                         lit light and `backlight <level>` (1O; levels 0..127, averaged over
                         the last tick), `end`
   threads               thread states of both tiles
+  stacks                `stack <tile> <stack> <used> of <available> bytes, margin <n>` for every
+                        thread stack (main and the static arrays), the most used since start,
+                        over power cycles and resets (needs the maps)
   power                 a power cycle: the board starts again (time from 0), keeping the flash
                         and what is held on the panel. `tick` does the same by itself on a
                         chip reset (the firmware's reboot), printing `reset at <ms> ms`
@@ -112,7 +115,9 @@ def guide_bits(key):
 class Harness:
     def __init__(self, tile0, tile1=None, map0=None, map1=None):
         self.imgs = (tile0, tile1)
+        self.maps = (map0, map1)
         self.syms = (xsim.read_map(map0) if map0 else None, xsim.read_map(map1) if map1 else None)
+        self.peaks = {}
         self.font = load_font16()
         self.resets = 0
         self.stopped = None
@@ -122,6 +127,8 @@ class Harness:
         """A new board running the images from the start; with `old`, the flash contents and
         what is held on the panel carry over (a chip reset or a power cycle), and with warm
         (a chip reset) also each tile's RAM outside its image, as on the chip."""
+        if old:
+            self.note_stacks(old)
         self.b = s49emu.Board(self.imgs[0], self.imgs[1], ui_syms=self.syms[0],
                               usb_syms=self.syms[1])
         if old and warm:
@@ -146,6 +153,23 @@ class Harness:
         self.window()
 
     # -- time
+    def note_stacks(self, b=None):
+        """Fold this board's stack low-water marks into self.peaks: (tile, name) ->
+        (bytes available, most used)."""
+        b = b or self.b
+        for k, tl in enumerate((b.ui, b.usb)):
+            if tl is None or not self.maps[k]:
+                continue
+            for name, avail, used in s49emu.stack_use(tl, self.maps[k]):
+                key = ('tile%d' % k, name)
+                was = self.peaks.get(key, (avail, 0))
+                self.peaks[key] = (avail, max(was[1], used))
+
+    def stack_lines(self):
+        self.note_stacks()
+        return ['stack %s %-28s %5d of %5d bytes, margin %5d' % (t, n, u, a, a - u)
+                for (t, n), (a, u) in sorted(self.peaks.items())]
+
     def window(self):
         for ch in self.b.chains + [self.b.backlight]:
             ch.reset_window(self.b.sys.now)
@@ -426,6 +450,8 @@ class Harness:
                 return ['leds'] + self.led_lines() + ['end']
             elif cmd == 'threads':
                 return self.threads()
+            elif cmd == 'stacks':
+                return self.stack_lines()
             elif cmd == 'power':
                 self.stopped = None
                 self.power_on(self.b)

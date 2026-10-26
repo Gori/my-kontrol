@@ -6,6 +6,9 @@
 #include "hal.h"
 #include "display.h"
 #include "panel.h"
+#ifdef MK_PROBE
+#include "probe.h"
+#endif
 
 const board_info_t board_info = {
     .name = "Komplete Kontrol S49",
@@ -48,6 +51,10 @@ void board_tick(void)
 
 void board_seg_show(const seg_display_t *d)
 {
+#ifdef MK_PROBE
+    if (probe_display())            /* the bring-up probe has the displays */
+        return;
+#endif
     display_show(d);
 }
 

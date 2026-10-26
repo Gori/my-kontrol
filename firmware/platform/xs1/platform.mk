@@ -10,6 +10,15 @@ PLATFORM_INCLUDES = -Iplatform/xs1/libc
 PLATFORM_SRCS = platform/xs1/platform.c platform/xs1/hal.c platform/xs1/link.c \
                 platform/xs1/thread.c platform/xs1/rt.c platform/xs1/sswitch.c
 PLATFORM_USB_SRCS = platform/xs1/tile0_link.c
+# HYBRID=1 DEV=1: tile 0 for NI's tile 1 (USB, DFU, 5-pin), with the bring-up probe; see
+# platform/xs1/ni_link.c and tools/xcore/s49pack.py
+ifdef HYBRID
+ifndef DEV
+$(error HYBRID=1 is a developer build: add DEV=1)
+endif
+PLATFORM_USB_SRCS = platform/xs1/ni_link.c
+PLATFORM_CFLAGS += -DXS1_HYBRID -DMK_PROBE
+endif
 NO_TINYUSB = 1
 PLATFORM_RULES = 1
 TILE1_SRCS = platform/xs1/tile1.c platform/xs1/link.c platform/xs1/thread.c platform/xs1/rt.c \

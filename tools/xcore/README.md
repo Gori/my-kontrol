@@ -10,6 +10,8 @@ which emits assembly but has no assembler or object writer; the rest is here.
 | `xas.py` | assembler: clang's XS1 assembly → relocatable object (JSON) |
 | `xld.py` | linker: objects → one tile RAM image + map; gc of unreferenced `.cc_top` blocks; picks every instruction size (relaxation) |
 | `ximage.py` | `--check` validates any xflash upgrade image (header, segment table, CRCs, padding); rebuilds NI's image locally. Our images come from XMOS's xflash |
+| `xe.py` | XMOS executable (XE) files: `--info` lists and CRC-checks the sectors; builds an .xe from tile RAM images (binary + goto sectors, our XN) for xflash |
+| `s49pack.py` | packaging with XTC's xflash: `proof NI.bin` (rebuild NI's image, compare), `image [--dev]` (ours), `hybrid NI.bin` (our tile 0 + NI's tile 1, output under fw/) |
 | `xcc.py` | cc-style driver (`-c`: clang to IR, the stack-alignment fix below, llc, xas) so the firmware Makefile builds XS1 objects |
 | `xsim.py` | XS1 simulator: tiles, 8 hardware threads each, timers, ports, clock blocks, channels (also between tiles), locks, synchronisers, events |
 | `s49run.py` | bring-up harness for our S49 firmware: runs our tile images, shows displays and lights, injects input, captures MIDI; `--stdio` for scripted tests |
@@ -90,6 +92,14 @@ smaller than `-Os`, which matters in 64 KB per tile.
   connected: a key on DIN and USB, a knob turned on sensor 0x12, Scale on lighting the light
   guide (about 1.5 minutes: the firmware's bit-banged I2C is most of the emulated work).
 - `sim` also runs test_seg and test_panel (the display and panel drivers) in xsim.
+- Stacks: `fw`, `standalone`, `usb` and `hybrid` report every thread stack's peak (xsim
+  keeps the lowest sp of each thread from its `set sp` / `init t[]:sp`; `s49emu.stack_use`
+  maps it to the main stack or the static array it is in) and fail when one keeps less than
+  512 bytes free: on XS1 an overflow corrupts memory without a fault. The runs include the
+  host protocol (every message test_host sends, written out by `HOST_CORPUS=file`, plus the
+  longest MESSAGE and DESCRIBE) on the DAW cable, a walk through every menu, and SysEx into
+  the 5-pin parser. The SIE thread is replaced by the USB model, so its stack is not
+  measured.
 - `standalone` (about 2 minutes): our firmware as a standalone instrument, both tiles, no
   USB: boot, a key and a knob on the 5-pin MIDI OUT and the displays, Scale + Arp + Clock
   Out set in the menu, the light guide in C major, the arp on a held key, Play / Stop as
@@ -113,11 +123,15 @@ smaller than `-Os`, which matters in 64 KB per tile.
 ## Not known / not done
 
 - Header word 0x04 of the upgrade image: per-model value in NI's images, checked by the S49
-  boot loader (0, 0x7FFFFFFF, 0xFFFFFFFF are rejected), not by libflash. Our images are
-  packaged with XMOS's xflash; `ximage.py` is a checker and rebuilds NI's image locally
-  (`--id` with the original word). Its default word 0 does not boot.
-- Segment order/flags: segment 0 gets 0x80000002, the rest 2, as in NI's images; which segment
-  lands on which physical tile is inferred, not proven.
+  boot loader (0, 0x7FFFFFFF, 0xFFFFFFFF are rejected), not by libflash. xflash writes it:
+  `s49pack.py proof` rebuilds NI's S25/S49/S61/S88 1.2.0 images from their segments with
+  XTC 15.3.1's xflash (`--factory-version 10`, `11` or `12`) with header and segments byte
+  for byte as NI's; only the page padding after L differs (xflash 0xFF, NI 0x00). By trying:
+  the word changes with `--upgrade`'s version and not with segment contents or the XN's name
+  or oscillator. How the boot loader checks it was not looked into. `ximage.py`'s own
+  `--id` default 0 does not boot; it stays a checker.
+- Segment order/flags: the segments follow the XN's JTAG chain, flags = routing id << 16 |
+  2 (0x80000002: our tile 0, node 1; 2: the boot node, our tile 1), as in NI's images.
 - Where the stage-2 loader itself sits in RAM while loading (an image that is too large could
   overwrite it) is not known; NI's largest segment is 53 988 bytes.
 - xsim: no interrupts, kernel calls or ready/strobe signals; of the switch registers only
@@ -125,6 +139,26 @@ smaller than `-Os`, which matters in 64 KB per tile.
   `chip reset`;
   timing is per instruction (4 cycles per thread, 500 MHz), not the exact pipeline. No XS2;
   no DWARF output.
+
+## Packaging: `python3 tools/xcore/s49pack.py proof|image|hybrid`
+
+XTC 15 (at `/Applications/XMOS_XTC_15.3.1`) has no XS1 targets, but keeps XMOS's XS1 part
+files in `configs/.deprecated` (package `XS1-L2A-QF124`, node `XS1-L1A`). `xe.py` writes an
+.xe with one binary sector and one goto per node and `firmware/boards/s-mk1/s-mk1.xn`;
+s49pack.py runs `xflash --upgrade 0 FILE.xe --factory-version 12 -o OUT.bin` with
+`XCC_DEVICE_PATH` pointing at both config folders. xflash with ELF sectors refuses the
+tools-12 format ("overlays are not supported"), and with all gotos at the end it takes one
+image only; binary + goto per node works. `--factory-version 13` and later write a newer
+header (not 0x01A551E5), which NI's factory image (tools 12 era) would not take.
+
+- `proof NI.bin`: NI's segments out, an .xe, xflash for factory versions 10..15.3, a byte
+  compare with NI's file; output in `fw/kks/pack/` (outside git).
+- `image [--dev]`: `make BOARD=s49 [DEV=1]`, both our tiles → `firmware/build/s49[-dev]/
+  my-kontrol-s49[-dev]-upgrade.bin`, checked with `ximage.py --check`.
+- `hybrid NI.bin`: our tile 0 (`make BOARD=s49 HYBRID=1 DEV=1`) and NI's tile 1 →
+  `fw/kks/pack/hybrid-dev-upgrade.bin` (holds NI's code: stays local).
+- xtest `hybrid` (needs NI's image locally): our tile 0 next to NI's tile 1 on the board
+  model, the probe in and out through NI's 5-pin MIDI, the update-mode start.
 
 ## Board emulator: `python3 tools/xcore/s49emu.py [IMAGE] [--ms N] [-e "at T CMD"] [--leds]`
 

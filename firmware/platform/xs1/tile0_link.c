@@ -1,6 +1,6 @@
 /* XS1 tile 0: the core's USB and 5-pin MIDI over the tile link (link.h), in place of
-   usb/usb_device.c; TinyUSB runs on tile 1 (usb/usb_link.c). Also the settings flash, a RAM
-   mirror of the SPI flash pages that tile 1 reads and writes, and update mode.
+   usb/usb_device.c; TinyUSB runs on tile 1 (usb/usb_link.c). Also the settings flash (read,
+   erased and written on tile 1's SPI flash, by request) and update mode.
 
    usb_task() (main loop) takes what tile 1 sent: USB_STATE -> app_usb_mounted(),
    USB_MIDI_RX -> midi_rx_packet(), DIN_RX -> midi_din_rx_byte(); and sends the core's
@@ -23,12 +23,10 @@ static uint8_t up, mounted;
 static uint8_t pkt[LINK_MAX];
 static uint32_t din_budget_us, din_last_ms;
 
-uint8_t xs1_flash_mirror[4 * FLASH_PAGE];
-
 /* called first in main, before any other chanend is allocated */
 void tile0_link_open(void)
 {
-    link = xs1_getr(RES_CHANEND);
+    link = xs1_chanend0;            /* chanend 0: LINK_TILE0 */
     xs1_setd(link, LINK_TILE1);
 }
 
@@ -90,12 +88,6 @@ static int request(uint8_t type, const uint8_t *p, uint32_t n, uint8_t want, uin
     }
 }
 
-static uint32_t spi_addr(uintptr_t a)
-{
-    uintptr_t off = a - (uintptr_t)xs1_flash_mirror;
-    return BOARD_SPI_SETTINGS + off / FLASH_PAGE * 4096 + off % FLASH_PAGE;
-}
-
 static void put32(uint8_t *b, uint32_t v)
 {
     b[0] = v, b[1] = v >> 8, b[2] = v >> 16, b[3] = v >> 24;
@@ -139,31 +131,22 @@ int tile0_flash_write(uint32_t spi, const uint8_t *s, uint32_t len)
     return 0;
 }
 
-static void flash_load(void)
+/* the settings store's flash (BOARD_FLASH_READ): SPI flash addresses, read by copy */
+void hal_flash_read(uintptr_t addr, void *dst, uint32_t n)
 {
-    for (uint32_t page = 0; page < 4; page++)
-        tile0_flash_read(spi_addr((uintptr_t)xs1_flash_mirror + page * FLASH_PAGE),
-                         xs1_flash_mirror + page * FLASH_PAGE, FLASH_PAGE);
+    tile0_flash_read(addr, dst, n);
 }
 
 int hal_flash_erase(uintptr_t addr)
 {
-    uintptr_t page = addr & ~(uintptr_t)(FLASH_PAGE - 1);
-    int r = tile0_flash_erase(spi_addr(page));
-    memset((void *)page, 0xFF, FLASH_PAGE);
-    return r;
+    return tile0_flash_erase(addr & ~0xFFFu);
 }
 
 int hal_flash_write(uintptr_t addr, const void *src, uint32_t len)
 {
-    int r = tile0_flash_write(spi_addr(addr), src, len);
-    if (!r)
-        for (uint32_t i = 0; i < len; i++)
-            ((uint8_t *)addr)[i] &= ((const uint8_t *)src)[i];
-    return r;
+    return tile0_flash_write(addr, src, len);
 }
 
-/* tile 1 is up when it says USB_STATE */
 void tile0_link_wait(void)
 {
     uint32_t n;
@@ -192,7 +175,6 @@ int tile0_system(uint8_t cmd)
 void usb_init(void)
 {
     tile0_link_wait();
-    flash_load();
     xs1_link_up();                  /* hal.c: the crash counter (may stop here), the ID */
     din_last_ms = hal_ms();
 }

@@ -782,11 +782,27 @@ class HostLink:
     def din_rx(self, data):
         return self.send(self.DIN_RX, bytes(data))
 
+    def usb_sysex(self, cable, msg):
+        """A SysEx message from the USB host, in link packets of at most 60 event packets."""
+        p = sysex_packets(cable, msg)
+        for i in range(0, len(p), 240):
+            self.send(self.USB_MIDI_RX, p[i:i + 240])
+
     def usb_rx(self, cable, msg):
         """A MIDI message from the USB host on a cable, as USB-MIDI event packets."""
         cin = {0x8: 8, 0x9: 9, 0xA: 10, 0xB: 11, 0xC: 12, 0xD: 13, 0xE: 14}.get(msg[0] >> 4, 15)
         pkt = bytes([cable << 4 | cin]) + bytes(msg[:3]).ljust(3, b'\0')
         return self.send(self.USB_MIDI_RX, pkt)
+
+
+def sysex_packets(cable, msg):
+    """USB-MIDI event packets (4 bytes each) carrying one SysEx message on a cable."""
+    out = b''
+    for i in range(0, len(msg), 3):
+        part = msg[i:i + 3]
+        cin = 4 if len(msg) - i > 3 else 4 + len(part)
+        out += bytes([cable << 4 | cin]) + part.ljust(3, b'\0')
+    return out
 
 
 class UsbHost:
@@ -972,6 +988,36 @@ class UsbHost:
     def string(self, index):
         s = self.control(0x80, 6, 0x0300 | index, 0x0409, 255)
         return s[2:s[0]].decode('utf-16-le') if s else None
+
+
+def stack_use(tile, map_path):
+    """[(name, bytes available, bytes used)] for every started thread of a tile: the main
+    stack (above the image, from the map's stack area) or the static array a thread's stack
+    is in (its block in the map), from the lowest sp seen (xsim tracks it per thread)."""
+    blocks, main = [], None
+    sec = None
+    for line in open(map_path):
+        if not line.startswith(' '):
+            sec = line.split(':')[0].strip()
+            continue
+        p = line.split()
+        if sec == 'areas' and p[0] == 'stack':
+            main = int(p[1], 16)
+        elif sec.startswith('blocks') and len(p) >= 6 and p[2] == 'bss':
+            blocks.append((int(p[0], 16), int(p[1]), '%s:%s' % (p[3], p[5].replace('.data', ''))))
+    out = []
+    for t in tile.threads:
+        if t.sp_top is None:
+            continue
+        name, start = 'main', main
+        for a, size, n in blocks:
+            if a <= t.sp_top - 4 < a + size:
+                name, start = n, a
+                break
+        if start is None:
+            continue
+        out.append((name, t.sp_top - start, t.sp_top - t.min_sp))
+    return out
 
 
 class Board:

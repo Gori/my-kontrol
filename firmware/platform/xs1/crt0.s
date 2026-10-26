@@ -1,10 +1,13 @@
 # XS1 tile startup, assembled with tools/xcore/xas.py and placed first by xld.py.
 # The XMOS boot loader jumps to the start of the tile image (RAM base) on thread 0.
 # Linker symbols: _cp/_dp (constant and data pool bases), _bss_start/_bss_end, _stack_top.
+# Leaves chanend 0 allocated in xs1_chanend0 (rt.c).
 
 	.text
 	.globl	_start
 _start:
+	getr	r4, 2			# chanend 0, first: the tile link (link.h) gets its tokens
+				# even while bss is still being cleared (NI's tile 1 speaks at once)
 	ldap	r11, _cp
 	set	cp, r11
 	ldap	r11, _dp
@@ -24,6 +27,8 @@ _start:
 	add	r0, r0, 4
 	bu	.Lzero
 .Lmain:
+	ldap	r11, xs1_chanend0
+	stw	r4, r11[0]
 	ldc	r0, 0			# main(0, 0)
 	ldc	r1, 0
 	bl	main

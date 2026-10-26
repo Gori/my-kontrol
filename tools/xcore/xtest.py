@@ -19,10 +19,13 @@ standalone (~2 min) the S49 firmware as a standalone instrument on the harness: 
            cycle, the watchdog, safe mode after 3 unstable starts, the update-mode combo
 usb        (~4 min) tile 1's USB above the wire with a host model in place of the SIE thread:
            enumeration, MIDI, update mode, a DFU download and upload, the factory combo
+hybrid     (~3 min, needs NI's image locally; skipped without it) our tile 0 next to NI's
+           tile 1 on the board model: start-up, the probe in and out through NI's 5-pin MIDI,
+           the update-mode start
 emu        (not in the default set, ~1 min) run NI's S49 image on the s49emu board model: LCD
            init sequence, standalone display text, a key press giving a note on DIN MIDI OUT
 """
-import glob, os, subprocess, sys, tempfile
+import glob, os, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -346,6 +349,43 @@ def test_s49():
     return ok
 
 
+STACK_MARGIN = 512                      # bytes every stack must keep free (an overflow on XS1
+                                        # corrupts memory without a fault)
+
+
+def host_corpus():
+    """Host-protocol messages for the firmware: every one test_host sends (HOST_CORPUS), then
+    the longest of a few kinds (a 64-character message in four parts, DESCRIBE)."""
+    test = os.path.join(FW, 'test')
+    subprocess.run(['make', '-C', test, 'build/test_host'], capture_output=True, check=True)
+    path = os.path.join(tempfile.mkdtemp(), 'corpus.txt')
+    subprocess.run([os.path.join(test, 'build', 'test_host')], env=dict(os.environ, HOST_CORPUS=path),
+                   capture_output=True, check=True)
+    msgs = [bytes.fromhex(x) for x in open(path).read().split()]
+    head = bytes([0xF0, 0x7D, 0x4D, 0x4B])
+    msgs.append(head + bytes([0x00, 2, 0, 0x7F, 7]) + b'Any DAW' + bytes([3]) + b'1.0' + b'\xf7')
+    for part in range(4):
+        msgs.append(head + bytes([0x28, 1, part, 1 if part == 3 else 0, 64]) + b'W' * 64 + b'\xf7')
+    msgs.append(head + bytes([0x07, 0xF7]))
+    return msgs
+
+
+def stack_check(name, *harnesses):
+    """Print every stack's peak use over the harnesses' runs; the ones under STACK_MARGIN."""
+    peaks = {}
+    for h in harnesses:
+        h.note_stacks()
+        for k, (avail, used) in h.peaks.items():
+            peaks[k] = (avail, max(used, peaks.get(k, (avail, 0))[1]))
+    bad = ['%s %s: %d of %d bytes used, %d free' % (t, n, u, a, a - u)
+           for (t, n), (a, u) in sorted(peaks.items()) if a - u < STACK_MARGIN]
+    print('%s: stack peaks %s' % (name, ', '.join('%s/%s %d of %d' % (t[-1], n.split(':')[-1], u, a)
+                                                 for (t, n), (a, u) in sorted(peaks.items()))))
+    for x in bad:
+        print('%s: FAILED stack margin under %d bytes: %s' % (name, STACK_MARGIN, x))
+    return not bad
+
+
 def test_fw():
     """Our S49 firmware (make BOARD=s49 DEV=1) on the harness with both of its tiles: splash,
     home screen, the CC page, a knob's CC on the 5-pin MIDI OUT, the menu; then with the
@@ -377,8 +417,9 @@ def test_fw():
                 ok = False
                 print('fw: after %r the displays were %s' % (cmd, d))
     ok &= din == ['din-out B0 0E 28']
+    h_both = h
     # tile 0 alone, USB connected through the stub
-    h = s49run.Harness(t0)
+    h = s49run.Harness(t0, map0=os.path.join(b, 'tile0.map'))
     out = []
     for c in ['tick 1400', 'usb 1', 'tick 20', 'key 60 100', 'tick 10', 'keyoff 60', 'tick 10',
               'knob 0 640', 'tick 30']:
@@ -393,6 +434,15 @@ def test_fw():
     c_keys = [k for k, v in guide.items() if v[2] > 100]
     scale = sorted(k for k, v in guide.items() if v == (24, 24, 24))
     ok &= c_keys == [0, 12, 24, 36, 48] and scale[:6] == [2, 4, 5, 7, 9, 11]
+    # the host protocol on the DAW cable: test_host's messages and the longest ones
+    corpus = host_corpus()
+    for m in corpus:
+        h.b.link.usb_sysex(1, m)
+        h.command('tick 5')
+    answers = [p for _, p in h.b.link.usb_tx if p[0] >> 4 == 1]
+    ok &= len(answers) > 20
+    ok &= stack_check('fw', h_both, h)
+    print('fw: host protocol: %d messages in, %d packets back on the DAW cable' % (len(corpus), len(answers)))
     print('fw: S49 firmware (tile 0 %d B, tile 1 %d B) in the harness: splash, home, CC page, '
           'menu %s; knob 1 -> %s; stub with USB: %s; light guide in C major: roots %s, scale %s...'
           % (len(t0), len(t1), 'ok' if ok else 'DIFFERENT', din, out, c_keys, scale[:7]))
@@ -458,6 +508,13 @@ def test_standalone():
     g = guide()
     check('light guide C major', c_major(g), sorted(g.items())[:8])
     run('keyoff 60', 'tick 100')
+    for top in range(6):                    # every menu, every item scrolled past
+        run(*push, *enc * top, *push, *enc * 24, *back, *back, *back)
+    run('tick 50')
+    for msg in ('F0 7D 4D 4B 00 02 00 7F 03 41 42 43 01 31 F7', 'F0 43 10 4C ' + '11 ' * 300 + 'F7'):
+        run('din-in ' + msg, 'tick 120')    # SysEx into the 5-pin parser
+    d = shot()
+    check('home after the menu walk', d[0][1] == 'C MAJOR ', d[:2])
     o = din(run(*btn(9), 'tick 50', *btn(11)))
     check('Play / Stop -> clock start / stop', o == 'FA FC', o)
     run('tick 3000')                                           # the settings get saved
@@ -474,8 +531,11 @@ def test_standalone():
     reset = [float(x.split()[2]) for x in o if x.startswith('reset at')]
     check('watchdog reboot 2..2.5 s after a hang', len(reset) == 1 and 2000 <= reset[0] - t <= 2500, o)
     run('tick 300')
-    log = bytes(h.b.flash.mem[0xF4000:0xF4004])
-    check('boot log: 3 starts, none stable', log == b'\xb0\xb0\xb0\xff', log.hex())
+    log = bytes(h.b.flash.mem[0xF4000:0xF4005])   # the first run passed 10 s: STABLE
+    check('boot log: stable, then 2 unstable starts', log == b'\xb0\x5a\xb0\xb0\xff', log.hex())
+    run('power', 'tick 300')
+    log = bytes(h.b.flash.mem[0xF4000:0xF4006])
+    check('boot log: a 3rd unstable start', log == b'\xb0\x5a\xb0\xb0\xb0\xff', log.hex())
     run('power', 'tick 300')
     d = shot()
     check('safe mode after 3 unstable starts', d[0] == ['SAFE    ', 'MODE    '], d[0])
@@ -488,12 +548,13 @@ def test_standalone():
     fl = h.b.flash
     check('NI flash untouched, no write refused', fl.violations == 0 and fl.refused == 0,
           (fl.violations, fl.refused))
+    stacks_ok = stack_check('standalone', h)
     for f in fails:
         print('standalone: FAILED ' + f)
     print('standalone: S49 firmware, both tiles, no USB: %d of %d checks passed (boot, 5-pin key/knob, '
           'scale + arp + light guide, clock start/stop, settings across a power cycle, watchdog, '
           'safe mode, update combo)' % (n[0] - len(fails), n[0]))
-    return not fails
+    return not fails and stacks_ok
 
 
 def test_usb():
@@ -505,7 +566,7 @@ def test_usb():
     here with ximage) into the upgrade slot of an XMOS flash layout and reading it back;
     RESETFROMDFU back; both page buttons at power-up giving update mode, and held 10 s the
     factory image (the upgrade image removed) without USB."""
-    import s49run, ximage
+    import s49run, ximage, s49emu
     r = subprocess.run(['make', '-C', FW, 'BOARD=s49', 'DEV=1', '-j8'], capture_output=True, text=True)
     if r.returncode:
         print('usb: FAILED to build\n' + r.stdout[-2000:] + r.stderr[-2000:])
@@ -541,6 +602,13 @@ def test_usb():
     o = run('tick 20', 'key 60 100', 'tick 20', 'keyoff 60', 'tick 20', 'usb-out 29903C40', 'tick 20')
     check('MIDI both ways', o == ['din-out 90 3C 50', 'usb-in 0 90 3C 50', 'din-out 80 3C 00', 'usb-in 0 80 3C 00',
                                   'din-out 90 3C 40'], o)
+    corpus, back = host_corpus(), []
+    for m in corpus:                        # the host protocol over USB, cable 1 (DAW)
+        p = s49emu.sysex_packets(1, m)
+        for i in range(0, len(p), 64):
+            h.b.host.bulk_out(0x01, p[i:i + 64])
+        back += [x for x in run('tick 4') if x.startswith('usb-in 1')]
+    check('host protocol over USB: answers on the DAW cable', len(back) > 10, len(back))
     o = run('usb-ctl 21 F2 0 3 0', 'tick 100')
     check('RESETINTODFU reboots', o[0] == 'usb-ctl ok ' and any(x.startswith('reset at') for x in o), o)
     check('tile 0 in update mode', shot()[0] == ['UPDATE  ', 'MODE    '], shot()[0])
@@ -566,10 +634,90 @@ def test_usb():
     fl = h.b.flash
     check('nothing outside the slot changed, nothing refused', fl.violations == 0 and fl.refused == 0,
           (fl.violations, fl.refused))
+    stacks_ok = stack_check('usb', h)
     for f in fails:
         print('usb: FAILED ' + f)
     print('usb: tile 1 USB above the wire (s49emu.UsbHost): %d of %d checks passed (enumeration, MIDI, '
           'update mode, DFU download/upload of a %d-byte image, factory combo)' % (n[0] - len(fails), n[0], len(new_img)))
+    return not fails and stacks_ok
+
+
+def test_hybrid():
+    """The hybrid bring-up image on the board model: our tile 0 (make BOARD=s49 HYBRID=1
+    DEV=1, platform/xs1/ni_link.c and the probe) next to NI's tile 1 (segment 1 of NI's
+    image, local only). Normal start: tile 1 goes through its start-up with us and keeps
+    running; a key reaches the 5-pin OUT through NI's tile 1; the probe's input-bits message
+    comes out; a probe command sent into the 5-pin IN (CC 80 = 3 on channel 16) starts the
+    LED walk (chain C bit 0 lit, reported back). Update mode (NI's RAM flag set): NI's tile 1
+    threads end up waiting where they do next to NI's own tile 0. NI's USB itself is not
+    modelled (its ULPI wire), so enumeration and DFU over USB are not run."""
+    if not os.path.exists(NI):
+        print('hybrid: skipped (%s not present)' % os.path.relpath(NI, ROOT))
+        return True
+    import s49emu, xsim
+    r = subprocess.run(['make', '-C', FW, 'BOARD=s49', 'HYBRID=1', 'DEV=1', '-j8'], capture_output=True, text=True)
+    if r.returncode:
+        print('hybrid: FAILED to build\n' + r.stdout[-2000:] + r.stderr[-2000:])
+        return False
+    b0 = os.path.join(FW, 'build', 's49-hybrid-dev')
+    ours = open(os.path.join(b0, 'tile0.bin'), 'rb').read()
+    syms = xsim.read_map(os.path.join(b0, 'tile0.map'))
+    ni = s49emu.load_image(NI)
+    fails, n = [], [0]
+
+    def check(what, cond, got):
+        n[0] += 1
+        if not cond:
+            fails.append('%s: %s' % (what, got))
+
+    b = s49emu.Board(ours, ni[1], ui_syms=syms)
+    seen = [0]
+
+    def din():
+        b.din_out.flush(b.sys.now)
+        d = ' '.join('%02X' % x for _, x, _ in b.din_out.bytes[seen[0]:])
+        seen[0] = len(b.din_out.bytes)
+        return d
+
+    why = b.run_ms(3000)
+    check('runs 3 s with NI\'s tile 1', why == 'time limit', why)
+    check('tile 1 started its 5 threads', sum(t.state != 'free' for t in b.usb.threads) == 5,
+          [t.state for t in b.usb.threads])
+    d = din()
+    check('probe: input bits on the 5-pin OUT', 'BF 0F 01 BF 10 00 BF 10 00 BF 10 00 BF 10 00 BF 0E 00' in d, d[:80])
+    b.key(60, 600)
+    why = b.run_ms(3050)
+    d = din()
+    check('a key through NI\'s tile 1 to the 5-pin OUT', why == 'time limit' and '90 3C' in d, (why, d[-60:]))
+    b.din_in.send(bytes([0xBF, 80, 3]), b.sys.now)
+    b.run_ms(3300)
+    for ch in b.chains:
+        ch.reset_window(b.sys.now)
+    why = b.run_ms(3400)
+    d = din()
+    lit = [i for i, v in enumerate(b.chains[2].brightness(b.sys.now)) if v > 60]
+    check('probe command in through NI\'s tile 1: LED walk', why == 'time limit' and lit == [0] and
+          'BF 0F 05 BF 10 02 BF 10 00 BF 10 00 BF 0E 02' in d, (why, lit, d[:80]))
+    use = s49emu.stack_use(b.ui, os.path.join(b0, 'tile0.map'))
+    print('hybrid: stack peaks ' + ', '.join('0/%s %d of %d' % (n.split(':')[-1], u, a) for n, a, u in use))
+    check('every tile 0 stack keeps %d bytes free' % STACK_MARGIN, all(a - u >= STACK_MARGIN for _, a, u in use),
+          [(n, a - u) for n, a, u in use if a - u < STACK_MARGIN])
+
+    def update_mode(t0):
+        bb = s49emu.Board(t0, ni[1])
+        struct.pack_into('<I', bb.usb.ram, 0x1C3B4 - 0x10000, 0x11042011)   # NI's DFU flag
+        why = bb.run_ms(1000)
+        return why, sorted((t.num, t.state, t.pc) for t in bb.usb.threads if t.state != 'free')
+    w1, nis = update_mode(ni[0])
+    w2, mine = update_mode(ours)
+    check('update mode: NI\'s tile 1 waits where it does next to NI\'s tile 0', w1 == w2 == 'time limit' and
+          [(x, y) for x, y, _ in nis] == [(x, y) for x, y, _ in mine] and
+          [p for _, s, p in nis if s == 'wait'] == [p for _, s, p in mine if s == 'wait'], (nis, mine))
+    for f in fails:
+        print('hybrid: FAILED ' + f)
+    print('hybrid: our tile 0 next to NI\'s tile 1 (board model, no USB): %d of %d checks passed '
+          '(start-up, probe out, key to 5-pin, probe command in, LED walk, update-mode start)'
+          % (n[0] - len(fails), n[0]))
     return not fails
 
 
@@ -596,8 +744,8 @@ def test_emu():
 
 
 TESTS = {'roundtrip': test_roundtrip, 'core': test_core, 'image': test_image, 'sim': test_sim,
-         's49': test_s49, 'fw': test_fw, 'standalone': test_standalone, 'usb': test_usb, 'emu': test_emu}
-DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw', 'standalone', 'usb']
+         's49': test_s49, 'fw': test_fw, 'standalone': test_standalone, 'usb': test_usb, 'hybrid': test_hybrid, 'emu': test_emu}
+DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw', 'standalone', 'usb', 'hybrid']
 
 
 if __name__ == '__main__':

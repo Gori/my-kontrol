@@ -21,8 +21,8 @@
    - Safe mode: the core stops with a marker on the displays; tile 1 (USB, DFU) runs on.
    - Unique ID: the XS1 has no chip ID; a hash of NI's identity sector (flash 0x4C000,
      read-only for us), which differs per keyboard if it holds the serial (TODO: confirm).
-   - Flash: the settings pages are a RAM mirror (xs1_flash_mirror, board_config.h) loaded
-     from the SPI flash at start; erase and write go to both (tile0_link.c). */
+   - Flash: the settings store reads, erases and writes tile 1's SPI flash by request
+     (BOARD_FLASH_READ, tile0_link.c). */
 #include <string.h>
 #include "hal.h"
 #include "link.h"
@@ -95,7 +95,7 @@ void hal_usb_init(void)
 
 /* ---------- the tick thread, which also watches the main loop ---------- */
 
-static uint32_t tick_stack[44];        /* 84 bytes used at most, reboot included (emulator) */
+static uint32_t tick_stack[164];       /* 92 bytes used at most, reboot included; xtest wants 512 free */
 
 static void tick_thread(uint32_t arg)
 {

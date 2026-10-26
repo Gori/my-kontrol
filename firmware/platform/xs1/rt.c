@@ -7,6 +7,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* chanend 0, allocated by crt0.s before anything else (the tile link uses it) */
+uint32_t xs1_chanend0;
+
 typedef unsigned long long u64;
 typedef long long s64;
 
