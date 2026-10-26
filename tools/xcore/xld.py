@@ -80,7 +80,7 @@ def link(paths, entry='_start', ram=(0x10000, 0x10000), stack=1024, keep=(), gc=
     # global symbols: name -> object index (strong definitions win over weak ones)
     glob = {}
     for i, o in enumerate(objs):
-        for name in o.globals:
+        for name in sorted(o.globals | o.weak):
             if name not in o.syms:
                 continue
             if name in glob:
@@ -96,8 +96,8 @@ def link(paths, entry='_start', ram=(0x10000, 0x10000), stack=1024, keep=(), gc=
     def find(ctx, name):
         """(object index, definition) of name as seen from object ctx, or None."""
         o = objs[ctx]
-        if name in o.syms:
-            return ctx, o.syms[name]
+        if name in o.syms and not (name in o.weak and glob.get(name, ctx) != ctx):
+            return ctx, o.syms[name]            # own definition, unless a weak one lost
         if name in glob:
             j = glob[name]
             return j, objs[j].syms[name]

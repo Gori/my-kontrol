@@ -32,10 +32,16 @@
 #define ULPI_PORT_DIR   XS1_PORT(1, 13)   /* 1N  DIR  (PHY -> link)        */
 #define ULPI_PORT_NXT   XS1_PORT(1, 14)   /* 1O  NXT  (PHY -> link)        */
 #define ULPI_PORT_STP   XS1_PORT(1, 15)   /* 1P  STP  (link -> PHY)        */
-#define ULPI_CLKBLK     1u                /* clock block driven by 1H       */
+#define ULPI_CLKBLK     (1u << 8 | 6)    /* clock block 1, driven by 1H     */
 
-/* ---- Channel message protocol between the SIE thread and the DCD ----
-   Fixed 4-word messages (tag, a, b, c) delimited by one END control token. */
+/* ---- Messages between the SIE thread and the DCD (TinyUSB thread) ----
+   Fixed 4-word messages (tag, a, b, c) in two queues in shared memory (same tile): commands
+   DCD -> SIE, events SIE -> DCD. A producer that finds the consumer's `bell` clear sets it
+   and sends one byte token on its chanend; the consumer takes the token, clears `bell`, then
+   empties the queue. So at most one token is ever in flight each way and neither thread can
+   block the other: with channel messages both ways, a SIE sending an event and a DCD sending
+   a command at the same time would each wait for the other's buffer forever. A full queue
+   waits for the consumer, which never waits for the producer. */
 enum {
     /* DCD -> SIE */
     ULPI_CMD_OPEN = 1,   /* a=ep_addr b=type c=max_packet */
@@ -51,20 +57,34 @@ enum {
     ULPI_EVT_SOF,          /* a=frame             */
 };
 
-/* SIE thread entry. `chan` is this thread's chanend resource id (allocated by
-   the platform par). Owns the ULPI ports and the usb_ep state; never returns. */
+#define ULPI_QUEUE 16
+typedef struct { uint32_t tag, a, b, c; } ulpi_msg_t;
+typedef struct {
+    volatile ulpi_msg_t m[ULPI_QUEUE];
+    volatile uint32_t head, tail;   /* producer writes head, consumer tail */
+    volatile uint32_t bell;         /* a token is on its way to the consumer */
+} ulpi_queue_t;
+
+extern ulpi_queue_t ulpi_cmdq, ulpi_evq;     /* dcd_xs1_ulpi.c */
+/* producer side: `chan` is the producer's chanend (connected to the consumer's) */
+void ulpi_put(ulpi_queue_t *q, uint32_t chan, uint32_t tag, uint32_t a, uint32_t b, uint32_t c);
+/* consumer side, after taking the bell token: 1 = a message */
+int ulpi_get(ulpi_queue_t *q, ulpi_msg_t *m);
+
+/* SIE thread entry. `chan` is this thread's chanend (connected to the DCD's). Owns the ULPI
+   ports and the usb_ep state; never returns. */
 void usb_ulpi_sie_thread(uint32_t chan);
 
 /* Reset and initialise the PHY to full speed. Returns FUNC_CTRL read back.
    Split out so it can run once before the SIE loop. */
 uint8_t usb_ulpi_phy_bringup(void);
 
-/* dcd_xs1_ulpi.c runs in the TinyUSB thread. The platform par gives it the
-   chanend that pairs with the SIE's. Call once before tud_init(). */
+/* dcd_xs1_ulpi.c runs in the TinyUSB thread. `chan` is its chanend, connected to the
+   SIE's. Call once before tusb_init(). */
 void usb_dcd_bind_channel(uint32_t chan);
 
-/* Block for one SIE event and feed it to the TinyUSB device stack. The TinyUSB
-   thread calls this in its loop in place of an ISR. */
+/* The TinyUSB thread waits on its chanend (with a timeout) and, when a bell token is
+   there, calls this: it takes the token and feeds every queued SIE event to the stack. */
 void usb_dcd_pump(void);
 
 #endif

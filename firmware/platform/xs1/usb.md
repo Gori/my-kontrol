@@ -14,8 +14,15 @@ RE notes `docs/hardware/s-mk1.md` + `fw/kks/notes/xmos.md §5`. No XMOS `lib_xud
 | `usb_crc.c/.h` | CRC5 / CRC16 (USB 2.0 §8.3.5) | yes |
 | `usb_packet.c/.h` | PID + token/data framing; ULPI register-cycle sequencer (abstract bus) | yes |
 | `usb_ep.c/.h` | device endpoint / control-transfer state machine | yes |
-| `usb_ulpi.c` | XS1 ports, clock block, PHY bring-up, packet TX/RX, SIE thread | no (no USB model / hardware) |
-| `dcd_xs1_ulpi.c` | TinyUSB `dcd_*` over the SIE channel | interface check only |
+| `usb_ulpi.c` | XS1 ports, clock block, PHY bring-up, packet TX/RX, SIE thread | no (no ULPI model / hardware) |
+| `dcd_xs1_ulpi.c` | TinyUSB `dcd_*` over the SIE queues | in the emulator, with a host model in place of the SIE (`xtest.py usb`) |
+
+Above the DCD (tile 1's USB device, milestone 4b): `usb/usb_link.c` (descriptors, MIDI and
+keyboard queues to the tile link), `usb/dfu_xmos.c` (DFU 1.1 + XMOS requests),
+`tile1_dfu.c` + `upgrade.c` (the upgrade image slot), `tusb/tusb_config.h`. Host-tested
+through TinyUSB with a fake DCD (`test/test_usbdev.c`, `test/test_upgrade.c`) and run as
+built for tile 1 in the emulator (`tools/xcore/xtest.py usb`: `s49emu.UsbHost` takes the
+SIE thread's place at the queue level).
 
 The pure layers (`usb_crc`, `usb_packet`, `usb_ep`) carry all the logic that can
 be verified without hardware. The port, clock and channel code in `usb_ulpi.c`
@@ -54,36 +61,32 @@ with letter-order indices (A=0..P=15). The numeric ids and the `setc` control-
 token values must be checked against the XS1-L port header for the exact die
 before flashing.
 
-## Thread / channel design
+## Thread / queue design
 
-Two threads on the USB tile (segment 1 in our map), one XS1 channel between them,
-no interrupts:
+Two threads on the USB tile, no interrupts, sharing memory (same tile):
 
 ```
-   wire (ULPI)            SIE thread (usb_ulpi.c)              TinyUSB thread
-  ───────────►  owns 8A/1N/1O/1P + clkblk + usb_ep state   (usbd + class drivers)
+   wire (ULPI)            SIE thread (usb_ulpi.c)              TinyUSB thread (tile1.c usb_loop)
+  ───────────►  owns 8A/1N/1O/1P + clkblk + usb_ep state   (usbd + class drivers, usb_link.c)
                         │   ▲                                   │   ▲
-          tokens/data   │   │ usb_ep callbacks                  │   │ dcd_* calls
-                        ▼   │                                   ▼   │
-                   service_wire()                         dcd_edpt_xfer/open/...
-                        │   │                                   │   │
-                        └── channel ◄── ULPI_CMD_* (open/xfer/stall/addr) ──┘
-                            channel ──► ULPI_EVT_* (setup/complete/reset/sof) ──► usb_dcd_pump() → dcd_event_*
+                        │   └── ulpi_cmdq ◄── ULPI_CMD_* (open/xfer/stall/addr) ──┘   │
+                        └────── ulpi_evq ───► ULPI_EVT_* (setup/complete/reset) ──────┘
+                 + a one-token "bell" on a chanend pair each way when a queue goes non-empty
 ```
 
-- The **SIE thread** is the only owner of the ULPI ports and of the `usb_ep`
-  state machine, so no shared-memory races. It blocks in `wait_event()` on either
-  the channel (a DCD command) or wire activity (DIR edge), then dispatches.
-- Host-initiated transactions on the wire drive `usb_ep_on_setup/in/out`; the
-  responses (DATA/ACK/NAK/STALL) go straight back on the wire.
-- Endpoint completions and SETUP packets are posted to the TinyUSB thread as
-  fixed 4-word channel messages ended by one control token. `usb_dcd_pump()`
-  (the event path, in place of an ISR — `dcd_int_handler` forwards to it) turns
-  them into `dcd_event_*` calls.
-- DCD calls from the stack (`dcd_edpt_open/xfer/stall`, `dcd_set_address`) become
-  `ULPI_CMD_*` messages applied to `usb_ep` inside the SIE thread.
-- Decoded MIDI/HID payloads cross the inter-tile link to tile 0 (the app); that
-  link is outside this driver.
+- The **SIE thread** is the only owner of the ULPI ports and of the `usb_ep` state machine.
+  It blocks in `wait_event()` on its chanend (a bell: commands queued) or wire activity
+  (DIR), then dispatches.
+- Messages are 4 words in two 16-entry queues (`ulpi_cmdq`, `ulpi_evq`, usb_ulpi.h). A
+  producer that finds the consumer's `bell` flag clear sets it and sends one token; the
+  consumer takes the token, clears the flag, then empties the queue. At most one token is
+  in flight each way, so neither thread ever blocks on the other. (The first version sent
+  every message as a channel packet both ways: a SIE posting an event while the DCD posts a
+  command fills both 8-token buffers and the two threads wait for each other forever.)
+- The TinyUSB thread waits on its chanend with a 1 ms timeout, pumps queued events into
+  `dcd_event_*` (`usb_dcd_pump()`), then runs `tud_task()` and the link queues.
+- Decoded MIDI/HID payloads cross the tile link to tile 0 (the app) through tile 1's main
+  thread (tile1.c).
 
 ## Full speed vs high speed
 
@@ -122,27 +125,40 @@ speed (`docs/hardware/s-mk1.md` "Stock USB"). Reasons to start at FS:
   framing, the ULPI register-cycle sequencer against a fake bus, and a simulated
   enumeration: GET_DESCRIPTOR, SET_ADDRESS (address latched only after the status
   IN), SET_CONFIGURATION, plus multi-packet bulk IN toggling and stall. All pass.
-- xcore build: `usb_crc/usb_packet/usb_ep/usb_ulpi` compile with
-  `clang --target=xcore`, assemble with `tools/xcore/xas.py` and link into a tile
-  image with `tools/xcore/xld.py` (≈2.5 KB). `dcd_xs1_ulpi.c` compiles for xcore
-  against the real TinyUSB `dcd.h` (with `CFG_TUSB_MCU = OPT_MCU_NONE` and the
-  xcore libc headers in `tools/xcore/test/include`).
+- xcore build: all of it is in tile 1's image (`make BOARD=s49`, platform.mk TILE1_SRCS):
+  the SIE, the DCD, TinyUSB (device core, MIDI, HID), our descriptors and DFU; about 16 KB
+  of tile 1's 64 KB.
+- `firmware/test/test_usbdev.c`: TinyUSB as configured for tile 1 with a fake DCD playing
+  the host: both descriptor sets parsed, MIDI and keyboard both ways, the DFU state machine,
+  downloads into the slot of a fake flash, the reboots after their status stages.
+- `tools/xcore/xtest.py usb`: the tile 1 image in the emulator with `s49emu.UsbHost` in
+  place of the SIE thread (same queues and bells): enumeration, MIDI through the tile link
+  to the core and the 5-pin port, RESETINTODFU over a chip reset into the DFU device, a
+  67 KB download into the upgrade slot and the upload, RESETFROMDFU.
 
 ## Risks for hardware bring-up (unverifiable here)
 
-1. **Data-bus turnaround.** Turning one 8-bit XS1 port between drive and sample
-   at 60 MHz without losing a ULPI cycle on DIR changes is the single biggest
-   risk. NI's use of extra 8-bit ports (8B–8D) suggests a two-port scheme; this
-   driver uses one port and must be checked against the real timing.
-2. **`setc` control-token values** in `usb_ulpi.c` and the **port resource ids**
-   in `usb_ulpi.h` are written from the documented encodings but not verified
-   against the XS1-L header for this die.
-3. **60 MHz packet TX/RX timing** (`txpkt`/`rxpkt`) and the NXT ready-strobe wiring
-   are untested; the per-byte NXT handshake and the RX end-of-packet (DIR low)
-   detection need a logic-analyser pass.
-4. **Event loop** (`wait_event`) uses raw XS1 event vectoring; the arming order
-   and `edu` placement need confirming on silicon or in an XC `select`.
-5. **PHY reset timing**: the FUNC_CTRL.RESET pulse uses a spin delay, not a timed
-   wait against the ULPI reset spec.
-6. No SOF handling, suspend/resume, or remote wakeup yet (not needed for the
-   first beta; `dcd_sof_enable`/`dcd_remote_wakeup` are stubs).
+Fixed while wiring it in (4b): the clock block id (`ULPI_CLKBLK` was 1, a timer), starting
+the clock block (setc START, not syncr, which is for ports), the setc values (now as xs1.h:
+BUFFERS 0x200F, RDY_HANDSHAKE 0x3017, CLOCKPORT 0x500F), the SIE/DCD deadlock above.
+
+Assessment: the wire layer as written is **not expected to work on hardware**; it is the
+part to redesign at bring-up with a logic analyser. Everything above it is tested.
+
+1. **60 MHz timing.** `rxpkt`/`txpkt` poll DIR, NXT and DATA with separate `in`s per byte.
+   A thread gets at most 125 MIPS (500 MHz / 4; 100 with tile 1's 5 threads running),
+   about 2 instructions per 16.7 ns ULPI cycle: far too few for three port reads, a test and a
+   store. A working design has to let the ports do the per-cycle work: the data port
+   clocked by 1H with transfer width 32 (one `in` per 4 bytes), NXT as its ready-in, DIR on
+   a port event, and the turnaround cycle accounted for. NI's firmware sets up 8A, 8B, 8C,
+   8D and 1N/1O/1P for its USB (fw notes xmos.md section 5): the XS1-L appears to have a
+   ULPI-specific port arrangement (separate TX and RX data ports, register ports, decoded
+   flags) that a clean-room driver would have to rediscover from the XS1-L datasheet.
+2. **Data-bus turnaround** on one 8-bit port (`data_drive()` is a no-op today).
+3. **No bus reset detection.** RX CMD line state (SE0 for > 2.5 us) is never parsed, so
+   `ULPI_EVT_RESET` is never posted and the address is not cleared on a host reset;
+   enumeration after a re-plug or a host-side reset would fail.
+4. **Event loop** (`wait_event`) uses raw XS1 event vectoring; the arming order and `edu`
+   placement need confirming on silicon.
+5. **PHY reset timing**: the FUNC_CTRL.RESET pulse uses a spin delay.
+6. No SOF handling, suspend/resume, or remote wakeup (not needed for MIDI/HID/DFU).

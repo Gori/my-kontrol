@@ -83,19 +83,29 @@ static void protect(const spi_bus_t *b, int chip, uint8_t was)
     write_status(b, chip == SPI_FLASH_AT25DF081A ? 0x7F : (uint8_t)(was & 0x9C));
 }
 
-static int allowed(int chip, uint32_t addr, uint32_t n)
+static int allowed(int chip, uint32_t addr, uint32_t n, uint32_t lo, uint32_t hi)
 {
     if (chip == SPI_FLASH_NONE)
         return -2;
-    if (addr < SPI_FLASH_FIRST_WRITABLE || addr >= SPI_FLASH_SIZE || n > SPI_FLASH_SIZE - addr)
+    if (addr < lo || addr >= hi || n > hi - addr)
         return -1;
     return 0;
 }
 
-int spi_flash_erase(const spi_bus_t *b, int chip, uint32_t addr)
+/* the image window must lie inside [SPI_FLASH_IMAGE_FLOOR, SPI_FLASH_IMAGE_CEIL) */
+static int window(uint32_t *lo, uint32_t *hi)
+{
+    if (*lo == SPI_FLASH_FIRST_WRITABLE && *hi == SPI_FLASH_SIZE)
+        return 0;
+    return *lo < SPI_FLASH_IMAGE_FLOOR || *hi > SPI_FLASH_IMAGE_CEIL || *lo >= *hi ? -1 : 0;
+}
+
+static int erase_in(const spi_bus_t *b, int chip, uint32_t addr, uint32_t lo, uint32_t hi)
 {
     addr &= ~0xFFFu;
-    int r = allowed(chip, addr, 4096);
+    int r = window(&lo, &hi);
+    if (!r)
+        r = allowed(chip, addr, 4096, lo, hi);
     if (r)
         return r;
     uint8_t was;
@@ -109,9 +119,12 @@ int spi_flash_erase(const spi_bus_t *b, int chip, uint32_t addr)
     return 0;
 }
 
-int spi_flash_write(const spi_bus_t *b, int chip, uint32_t addr, const uint8_t *p, uint32_t n)
+static int write_in(const spi_bus_t *b, int chip, uint32_t addr, const uint8_t *p, uint32_t n,
+                    uint32_t lo, uint32_t hi)
 {
-    int r = allowed(chip, addr, n);
+    int r = window(&lo, &hi);
+    if (!r)
+        r = allowed(chip, addr, n, lo, hi);
     if (r)
         return r;
     uint8_t was;
@@ -132,4 +145,29 @@ int spi_flash_write(const spi_bus_t *b, int chip, uint32_t addr, const uint8_t *
     if (restore)
         protect(b, chip, was);
     return 0;
+}
+
+int spi_flash_erase(const spi_bus_t *b, int chip, uint32_t addr)
+{
+    return erase_in(b, chip, addr, SPI_FLASH_FIRST_WRITABLE, SPI_FLASH_SIZE);
+}
+
+int spi_flash_write(const spi_bus_t *b, int chip, uint32_t addr, const uint8_t *p, uint32_t n)
+{
+    return write_in(b, chip, addr, p, n, SPI_FLASH_FIRST_WRITABLE, SPI_FLASH_SIZE);
+}
+
+int spi_flash_erase_image(const spi_bus_t *b, int chip, uint32_t addr, uint32_t lo, uint32_t hi)
+{
+    if (lo == SPI_FLASH_FIRST_WRITABLE && hi == SPI_FLASH_SIZE)
+        return -1;                                 /* not a way around the guard */
+    return erase_in(b, chip, addr, lo, hi);
+}
+
+int spi_flash_write_image(const spi_bus_t *b, int chip, uint32_t addr, const uint8_t *p, uint32_t n,
+                          uint32_t lo, uint32_t hi)
+{
+    if (lo == SPI_FLASH_FIRST_WRITABLE && hi == SPI_FLASH_SIZE)
+        return -1;
+    return write_in(b, chip, addr, p, n, lo, hi);
 }

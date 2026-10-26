@@ -97,6 +97,15 @@ smaller than `-Os`, which matters in 64 KB per tile.
   watchdog rebooting a hung main loop, safe mode after 3 unstable starts, the page-button
   combo giving update mode, and NI's flash area untouched. Buttons whose input bits are
   unknown come as DEV events.
+- `usb` (about 3 minutes): tile 1's USB above the wire. `s49emu.UsbHost` takes the SIE
+  thread's place (a hook on `usb_ulpi_sie_thread`) and speaks its queues and bells
+  (firmware usb_ulpi.h), as a host: enumeration (descriptors, strings), MIDI to the host
+  from a key and from the host to the 5-pin OUT, RESETINTODFU over a chip reset (the harness
+  keeps RAM outside the images, as the chip does) into the DFU device, a download of our own
+  image (built by ximage) into the upgrade slot of an XMOS layout in the emulated flash
+  (`SpiFlash.xmos_layout`, our test bytes), the upload, RESETFROMDFU, and both page buttons
+  at power-up: update mode, and held 10 s the upgrade image removed. The ULPI wire, the PHY
+  and USB timing are not modelled.
 - `emu` (opt-in, about 1 min, needs NI's image locally): boots NI's S49 firmware on the
   board model and checks the LCD init sequence, the standalone display text and that a key
   press gives a note on DIN MIDI OUT.
@@ -159,7 +168,9 @@ sides.
   `din-in HEX`, `in CABLE HEX`, `usb 0|1`, `event TYPE ID VALUE` (DEV=1 builds: an event
   for the core over the link, like tools/mktest.py), `screen`, `leds`, `threads`, `power` (a
   power cycle keeping the flash and held inputs), `flash ADDR [N]`, `flash-set ADDR HEX`,
-  `hang` (stop tile 0's main thread, for the watchdog), `quit`. After a tick it prints
+  `hang` (stop tile 0's main thread, for the watchdog), `flash-layout [FILE]`, and with our
+  tile 1 image and its map the USB host model: `usb-enum`, `usb-out HEX`, `usb-ctl`,
+  `dfu-dnload FILE`, `dfu-upload [FILE]`, `quit`. After a tick it prints
   `din-out <hex>` and `out <cable> <hex>` for MIDI sent, `reset at <ms> ms` when the firmware
   rebooted the chip (the harness restarts the board and runs on), `stopped <reason>` on a crash.
   Buttons are by input bit until the bit map is known.

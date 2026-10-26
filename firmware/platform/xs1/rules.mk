@@ -5,7 +5,7 @@ TILE1_OBJS = $(patsubst %.c,$(BUILD)/tile1/%.o,$(TILE1_SRCS))
 
 $(BUILD)/tile1/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(TILE1_CFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/tile0.bin: $(OBJS) platform/xs1/tile.ld platform/xs1/crt0.s
 	python3 $(XCORE)/xld.py @platform/xs1/tile.ld $(OBJS) -o $@ -m $(BUILD)/tile0.map

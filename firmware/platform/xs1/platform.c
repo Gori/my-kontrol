@@ -5,13 +5,14 @@
 
 void mk_main(void);
 void tile0_link_open(void);
+void xs1_boot_combo(void);
 
 int main(void)
 {
     tile0_link_open();          /* first chanend of the tile: the link (link.h) */
     board_early_init();
     if (board_boot_combo())
-        hal_enter_bootloader();
+        xs1_boot_combo();           /* update mode, or held 10 s: the factory image */
     mk_main();
     return 0;
 }

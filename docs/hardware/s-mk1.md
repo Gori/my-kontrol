@@ -231,6 +231,8 @@ Port names are per tile: 1J on tile 0 is not 1J on tile 1. The reference clock i
 - **Our firmware:**
   - Must never write 0x0–0x54FFF, so restoring NI's firmware gives back an untouched keyboard (like the M32 rule).
   - Keeps its settings at **0xF0000** (in the unused region; confirmed clear of NI's areas), 4 sectors, and its boot log in the sector at 0xF4000.
+  - The one exception to the 0x55000 rule: in update mode, DFU writes the upgrade image slot, found at run time (word 0 → factory image at 4n + 8, its length, then the upgrade image where it is, else the next 64 KB boundary), at most 128 KB and never at or above 0x4C000. Nothing is written if no factory image is found.
+  - Update mode: a RAM word at tile 1 0x1C3B4 (where NI keeps its DFU flag; our own value) and a chip reset; the next start is a DFU-only device, PID 0x1352. Entered by RESETINTODFU / DETACH, the menu, or both page buttons at power-up. Holding them 10 s more removes the upgrade image (the factory image boots), without USB.
 - **Write protection:** NI leaves the chip's status-register protection bits set after a write. Our flash driver must clear them before writing and may set them again after.
 
 ## Stock USB

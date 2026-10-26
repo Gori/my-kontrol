@@ -15,8 +15,10 @@
      mode instead of starting a 4th time. Power cycles count too (the XS1 tells no reset
      cause), so 3 quick ones are a way into safe mode; the next start runs normally.
    - Reboot: a write to the switch's PLL register (sswitch.c), as NI's firmware does.
-   - Update mode and safe mode: for now both stop the core with a marker on the displays
-     (TODO: XMOS DFU through tile 1). Tile 1 keeps running.
+   - Update mode: tile 1 reboots the chip into its DFU device (tile1.c); this tile shows
+     UPDATE MODE and waits. Both page buttons at power-up do the same; held 10 s more, they
+     remove the upgrade image so NI's factory image boots (xs1_boot_combo).
+   - Safe mode: the core stops with a marker on the displays; tile 1 (USB, DFU) runs on.
    - Unique ID: the XS1 has no chip ID; a hash of NI's identity sector (flash 0x4C000,
      read-only for us), which differs per keyboard if it holds the serial (TODO: confirm).
    - Flash: the settings pages are a RAM mirror (xs1_flash_mirror, board_config.h) loaded
@@ -29,7 +31,6 @@
 #ifndef BOARD_SPI_BOOTLOG
 #define BOARD_SPI_BOOTLOG (BOARD_SPI_SETTINGS + 0x4000)   /* after the 4 settings sectors */
 #endif
-#define SPI_IDENTITY 0x4C000u
 #define LOG_SIZE 4096u
 #define LOG_BOOT 0xB0
 #define LOG_STABLE 0x5A
@@ -94,7 +95,7 @@ void hal_usb_init(void)
 
 /* ---------- the tick thread, which also watches the main loop ---------- */
 
-static uint32_t tick_stack[64];
+static uint32_t tick_stack[44];        /* 84 bytes used at most, reboot included (emulator) */
 
 static void tick_thread(uint32_t arg)
 {
@@ -121,30 +122,83 @@ void hal_tick_start(void)
     xs1_thread_start(tick_thread, 0, tick_stack, sizeof tick_stack / 4);
 }
 
-/* ---------- stopping and rebooting ---------- */
+/* ---------- stopping, update mode, rebooting ---------- */
+
+/* display 1 shows a / b, display 2 c / d (segment boards; others keep the core's screen) */
+static void show(const char *a, const char *b, const char *c, const char *d)
+{
+#if BOARD_SEG_DISPLAYS
+    seg_display_t s[BOARD_SEG_DISPLAYS];
+    const char *t[4] = {a, b, c, d};
+    memset(s, 0, sizeof s);
+    for (int i = 0; i < BOARD_SEG_DISPLAYS; i++)
+        memset(s[i].line, ' ', sizeof s[i].line);
+    for (int i = 0; i < 4; i++)
+        if (t[i])
+            memcpy(s[i / 2].line[i % 2], t[i], strlen(t[i]));
+    board_seg_show(s);
+#else
+    (void)a, (void)b, (void)c, (void)d;
+#endif
+}
+
+static void park(void) __attribute__((noreturn));
+static void park(void)
+{
+    for (;;)
+        asm volatile("clre\n\twaiteu");
+}
 
 static void stop(const char *a, const char *b) __attribute__((noreturn));
 static void stop(const char *a, const char *b)
 {
     wd_off = 1;
-#if BOARD_SEG_DISPLAYS
-    seg_display_t d[BOARD_SEG_DISPLAYS];
-    memset(d, 0, sizeof d);
-    for (int i = 0; i < BOARD_SEG_DISPLAYS; i++)
-        memset(d[i].line, ' ', sizeof d[i].line);
-    memcpy(d[0].line[0], a, strlen(a));
-    memcpy(d[0].line[1], b, strlen(b));
-    board_seg_show(d);
-#else
-    (void)a, (void)b;               /* the core has drawn its update screen */
-#endif
-    for (;;)
-        asm volatile("clre\n\twaiteu");
+    show(a, b, 0, 0);
+    park();
 }
 
+/* tile 1 came up in update mode (its DFU device): nothing to do here */
+void xs1_update_mode(void) __attribute__((noreturn));
+void xs1_update_mode(void)
+{
+    stop("UPDATE", "MODE");
+}
+
+/* Tile 1 reboots the chip into update mode. If it doesn't within 1 s (tile 1 not up, or
+   not answering), the core stops here with the marker. */
 void hal_enter_bootloader(void)
 {
-    stop("UPDATE", "MODE");         /* TODO: XMOS DFU via tile 1 */
+    wd_off = 1;
+    show("UPDATE", "MODE", 0, 0);
+    if (tile0_link_is_up())
+        tile0_system(LINK_SYS_UPDATE);
+    hal_delay_ms(1000);
+    park();
+}
+
+/* Both page buttons held at power-up (platform.c): update mode, or, still held after 10 s,
+   back to the factory image (NI's firmware) without USB: tile 1 removes the upgrade image
+   and reboots. For a keyboard whose USB doesn't come up. */
+void xs1_boot_combo(void)
+{
+    char n[9] = "IN    S";
+    wd_off = 1;
+    tile0_link_wait();
+    for (int s = 10; s > 0; s--) {
+        n[3] = (char)('0' + s / 10), n[4] = (char)('0' + s % 10);
+        if (n[3] == '0')
+            n[3] = ' ';
+        show("UPDATE", "MODE", "FACTORY", n);
+        for (int i = 0; i < 10; i++) {
+            hal_delay_ms(100);
+            if (!board_boot_combo())
+                hal_enter_bootloader();
+        }
+    }
+    show("FACTORY", "RESTORE", 0, 0);
+    if (tile0_system(LINK_SYS_FACTORY))
+        show("FACTORY", "FAILED", 0, 0);
+    park();
 }
 
 void hal_reboot(void)
@@ -173,13 +227,8 @@ void hal_mark_stable(void)
 void xs1_link_up(void)
 {
     uint8_t buf[64];
-    tile0_flash_read(SPI_IDENTITY, buf, sizeof buf);
-    for (int k = 0; k < 3; k++) {   /* FNV-1a, 3 seeds */
-        uint32_t h = 2166136261u + (uint32_t)k;
-        for (uint32_t i = 0; i < sizeof buf; i++)
-            h = (h ^ buf[i]) * 16777619u;
-        memcpy(chip_id + 4 * k, &h, 4);
-    }
+    tile0_flash_read(LINK_ID_FLASH, buf, sizeof buf);
+    link_chip_id(buf, chip_id);
 
     uint32_t crashes = 0;
     for (log_end = 0; log_end < LOG_SIZE; log_end += sizeof buf) {

@@ -17,6 +17,8 @@ fw         our S49 firmware (make BOARD=s49 DEV=1) on the harness with both tile
 standalone (~2 min) the S49 firmware as a standalone instrument on the harness: 5-pin MIDI,
            displays, Smart Play and the light guide, settings in the SPI flash across a power
            cycle, the watchdog, safe mode after 3 unstable starts, the update-mode combo
+usb        (~4 min) tile 1's USB above the wire with a host model in place of the SIE thread:
+           enumeration, MIDI, update mode, a DFU download and upload, the factory combo
 emu        (not in the default set, ~1 min) run NI's S49 image on the s49emu board model: LCD
            init sequence, standalone display text, a key press giving a note on DIN MIDI OUT
 """
@@ -494,6 +496,83 @@ def test_standalone():
     return not fails
 
 
+def test_usb():
+    """Tile 1's USB above the wire, on the harness with both tiles: s49emu.UsbHost stands in
+    for the SIE thread (usb_ulpi.c) and the host, so the DCD, TinyUSB, our descriptors, the
+    MIDI and DFU code run as built for tile 1. Enumeration; MIDI to the host from a key and
+    from the host to the 5-pin OUT; RESETINTODFU into update mode (the RAM flag kept over the
+    chip reset, tile 0 showing UPDATE MODE); the DFU device downloading our own image (built
+    here with ximage) into the upgrade slot of an XMOS flash layout and reading it back;
+    RESETFROMDFU back; both page buttons at power-up giving update mode, and held 10 s the
+    factory image (the upgrade image removed) without USB."""
+    import s49run, ximage
+    r = subprocess.run(['make', '-C', FW, 'BOARD=s49', 'DEV=1', '-j8'], capture_output=True, text=True)
+    if r.returncode:
+        print('usb: FAILED to build\n' + r.stdout[-2000:] + r.stderr[-2000:])
+        return False
+    b = os.path.join(FW, 'build', 's49-dev')
+    t0, t1 = (open(os.path.join(b, n), 'rb').read() for n in ('tile0.bin', 'tile1.bin'))
+    tmp = tempfile.mkdtemp()
+    old, new = os.path.join(tmp, 'old.bin'), os.path.join(tmp, 'new.bin')
+    old_img = ximage.build([bytes(0x6000), bytes(0x4000)], ident=1)       # "the installed image"
+    new_img = ximage.build([t1, t0], ident=2)                                # ours (word 4: not NI's)
+    open(old, 'wb').write(old_img)
+    open(new, 'wb').write(new_img)
+    h = s49run.Harness(t0, t1, os.path.join(b, 'tile0.map'), os.path.join(b, 'tile1.map'))
+    fails, n = [], [0]
+
+    def run(*cmds):
+        out = []
+        for c in cmds:
+            out += h.command(c)
+        return out
+
+    def check(what, cond, got):
+        n[0] += 1
+        if not cond:
+            fails.append('%s: %s' % (what, got))
+
+    shot = lambda: [x.split('|')[1:3] for x in h.command('screen')[1:-1]]
+    slot = run('flash-layout ' + old)
+    check('slot', slot == ['flash-layout slot 16000-36000'], slot)
+    o = run('tick 1300', 'usb-enum')
+    check('enumeration', len(o) == 2 and o[0].startswith('usb-device 17CC:1350 bcd 0090 "My Kontrol S49" serial ')
+          and o[1] == 'usb-config 208 bytes, interfaces 0:01/01/00 1:01/03/00 2:03/00/00 3:FE/01/01', o)
+    o = run('tick 20', 'key 60 100', 'tick 20', 'keyoff 60', 'tick 20', 'usb-out 29903C40', 'tick 20')
+    check('MIDI both ways', o == ['din-out 90 3C 50', 'usb-in 0 90 3C 50', 'din-out 80 3C 00', 'usb-in 0 80 3C 00',
+                                  'din-out 90 3C 40'], o)
+    o = run('usb-ctl 21 F2 0 3 0', 'tick 100')
+    check('RESETINTODFU reboots', o[0] == 'usb-ctl ok ' and any(x.startswith('reset at') for x in o), o)
+    check('tile 0 in update mode', shot()[0] == ['UPDATE  ', 'MODE    '], shot()[0])
+    o = run('usb-enum')
+    check('DFU device', len(o) == 2 and o[0].startswith('usb-device 17CC:1352') and
+          o[1] == 'usb-config 27 bytes, interfaces 0:FE/01/02', o)
+    o = run('dfu-dnload ' + new)
+    fl = h.b.flash
+    check('download', o == ['dfu-dnload status 0 state 2'], o)
+    check('image in the slot', bytes(fl.mem[0x16000:0x16000 + len(new_img)]) == new_img, '')
+    o = run('dfu-upload ' + os.path.join(tmp, 'up.bin'))
+    check('upload', open(os.path.join(tmp, 'up.bin'), 'rb').read() == new_img, o)
+    o = run('usb-ctl 21 F3 0 0 0', 'tick 1300', 'usb-enum')
+    check('RESETFROMDFU', any(x.startswith('reset at') for x in o) and any(x.startswith('usb-device 17CC:1350') for x in o), o)
+    run('btn-down 28', 'btn-down 29', 'power', 'tick 300')
+    d = shot()
+    check('page buttons at power-up: countdown', d[0] == ['UPDATE  ', 'MODE    '] and d[1][0] == 'FACTORY ', d[:2])
+    o = run('btn-up 28', 'btn-up 29', 'tick 300', 'usb-enum')
+    check('released: update mode', any(x.startswith('reset at') for x in o) and any(x.startswith('usb-device 17CC:1352') for x in o), o)
+    o = run('btn-down 28', 'btn-down 29', 'power', 'tick 11000')
+    check('held 10 s: the upgrade image removed, reboot', any(x.startswith('reset at') for x in o) and
+          bytes(h.b.flash.mem[0x16000:0x17000]) == b'\xff' * 4096, o)
+    fl = h.b.flash
+    check('nothing outside the slot changed, nothing refused', fl.violations == 0 and fl.refused == 0,
+          (fl.violations, fl.refused))
+    for f in fails:
+        print('usb: FAILED ' + f)
+    print('usb: tile 1 USB above the wire (s49emu.UsbHost): %d of %d checks passed (enumeration, MIDI, '
+          'update mode, DFU download/upload of a %d-byte image, factory combo)' % (n[0] - len(fails), n[0], len(new_img)))
+    return not fails
+
+
 def test_emu():
     if not os.path.exists(NI):
         print('emu: skipped (%s not present)' % os.path.relpath(NI, ROOT))
@@ -517,8 +596,8 @@ def test_emu():
 
 
 TESTS = {'roundtrip': test_roundtrip, 'core': test_core, 'image': test_image, 'sim': test_sim,
-         's49': test_s49, 'fw': test_fw, 'standalone': test_standalone, 'emu': test_emu}
-DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw', 'standalone']
+         's49': test_s49, 'fw': test_fw, 'standalone': test_standalone, 'usb': test_usb, 'emu': test_emu}
+DEFAULT = ['roundtrip', 'core', 'image', 'sim', 's49', 'fw', 'standalone', 'usb']
 
 
 if __name__ == '__main__':

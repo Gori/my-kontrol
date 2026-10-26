@@ -324,7 +324,7 @@ void panel_tick(void)
     scan();
 }
 
-static uint32_t sensor_stack[96];
+static uint32_t sensor_stack[112];     /* 360 bytes used at most (emulator) */
 
 static void sensor_thread(uint32_t arg)
 {

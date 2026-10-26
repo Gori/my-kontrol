@@ -12,7 +12,7 @@
 
 evq_t keybed_events;
 uint16_t keybed_dropped;
-static uint32_t stack[64];
+static uint32_t stack[40];             /* 76 bytes used at most (emulator, xtest standalone) */
 
 static void keybed_thread(uint32_t arg)
 {

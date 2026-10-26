@@ -44,6 +44,19 @@ Commands (--stdio, one per line; blank lines and # comments are skipped):
   flash ADDR [N]        `flash <addr> <hex>`: N bytes (default 16) of the SPI flash at hex ADDR
   flash-set ADDR HEX    put bytes into the SPI flash directly (a state earlier runs left)
   hang                  tile 0's main thread stops for good (a hung main loop: the watchdog)
+  flash-layout [FILE]   an XMOS boot layout in the flash (our test bytes: boot loader, factory
+                        image, FILE as the upgrade image): `flash-layout slot <lo>-<hi>`
+USB (our tile 1 image with --map1: a host at the level of the SIE thread, s49emu.UsbHost; the
+wire is not modelled):
+  usb-enum              reset, enumerate, configure: `usb-device VID:PID bcd .. "product"
+                        serial ..`, `usb-config <n> bytes, interfaces <n:class/sub/proto> ..`;
+                        then `tick` prints `usb-in <cable> <hex>` (MIDI to the host) and
+                        `usb-key <modifier> <key>` (keyboard presses)
+  usb-out HEX           USB-MIDI event packets (4 bytes each) from the host
+  usb-ctl T R V I L [HEX]  a control transfer (hex fields): `usb-ctl ok <hex>` or `usb-ctl stall`
+  dfu-dnload FILE       download an image as NI's updater does (in update mode): `dfu-dnload
+                        status <DFU status> state <DFU state>`
+  dfu-upload [FILE]     read the installed upgrade image back: `dfu-upload <n> bytes`
   quit
 Answers `error ...` for an unknown command.
 
@@ -105,17 +118,23 @@ class Harness:
         self.stopped = None
         self.power_on()
 
-    def power_on(self, old=None):
+    def power_on(self, old=None, warm=False):
         """A new board running the images from the start; with `old`, the flash contents and
-        what is held on the panel carry over (a chip reset or a power cycle)."""
+        what is held on the panel carry over (a chip reset or a power cycle), and with warm
+        (a chip reset) also each tile's RAM outside its image, as on the chip."""
         self.b = s49emu.Board(self.imgs[0], self.imgs[1], ui_syms=self.syms[0],
                               usb_syms=self.syms[1])
+        if old and warm:
+            for new_t, old_t, img in ((self.b.ui, old.ui, self.imgs[0]), (self.b.usb, old.usb, self.imgs[1])):
+                if new_t is not None and old_t is not None:
+                    new_t.ram[len(img):] = old_t.ram[len(img):]
         if self.font:                   # our glyphs first, NI's for the rest
             self.b.lcd.glyph = {**s49emu.GLYPH, **self.font}
         if old:
             if old.flash:
                 self.b.flash.mem[:] = old.flash.mem
                 self.b.flash.violations = old.flash.violations
+                self.b.flash.window = old.flash.window
             else:
                 self.b.link.flash[:] = old.link.flash
                 self.b.link.violations = old.link.violations
@@ -123,6 +142,7 @@ class Harness:
             self.b.knobs, self.b.touch = old.knobs, old.touch
             self.b.pedal, self.b.switches = old.pedal, old.switches
         self.din_seen = self.usb_seen = 0
+        self.usb_lines = []
         self.window()
 
     # -- time
@@ -136,14 +156,26 @@ class Harness:
         if self.stopped:
             return []
         out, end = [], self.b.ms() + ms
+        if self.b.sys.reset_requested:      # a reset during a USB request (s49emu.UsbHost)
+            out += self.midi_out() + ['reset at %.1f ms' % self.b.ms()]
+            end -= self.b.ms()
+            self.resets += 1
+            self.power_on(self.b, warm=True)
         while True:
-            why = self.b.run_ms(end)
+            host = self.b.host
+            if host and host.up() and host.address:
+                why = 'time limit'          # a configured host polls its IN endpoints every 1 ms
+                while why == 'time limit' and self.b.ms() < end - 1e-6:
+                    why = self.b.run_ms(min(end, self.b.ms() + 1))
+                    self.usb_poll()
+            else:
+                why = self.b.run_ms(end)
             if why != 'chip reset':
                 break
             out += self.midi_out() + ['reset at %.1f ms' % self.b.ms()]
             end -= self.b.ms()
             self.resets += 1
-            self.power_on(self.b)
+            self.power_on(self.b, warm=True)
         if why != 'time limit':
             self.stopped = why
         return out
@@ -200,6 +232,60 @@ class Harness:
         else:
             self.b.din_in.send(data, self.b.sys.now)
 
+    # -- USB, through the host model (our tile 1 image with its map)
+    def usb_poll(self):
+        h = self.b.host
+        for ep in (0x81, 0x82):
+            data = h.bulk_in(ep)
+            if ep == 0x81:
+                for i in range(0, len(data) - 3, 4):
+                    p = data[i:i + 4]
+                    n = CIN_LEN.get(p[0] & 15, 3)
+                    self.usb_lines.append('usb-in %d %s' % (p[0] >> 4, p[1:1 + n].hex(' ').upper()))
+            elif len(data) == 8 and (data[0] or data[2]):
+                self.usb_lines.append('usb-key %02X %02X' % (data[0], data[2]))
+
+    def usb_enum(self):
+        h = self.b.host
+        r = h.enumerate()
+        if not r:
+            return ['usb-enum failed']
+        dev, cfg = r
+        vid, pid, bcd = struct.unpack_from('<HHH', dev, 8)
+        itfs, i = [], 0
+        while i < len(cfg):
+            if cfg[i + 1] == 4:
+                itfs.append('%d:%02X/%02X/%02X' % (cfg[i + 2], cfg[i + 5], cfg[i + 6], cfg[i + 7]))
+            i += cfg[i]
+        return ['usb-device %04X:%04X bcd %04X "%s" serial %s' % (vid, pid, bcd, h.string(dev[15]), h.string(dev[16])),
+                'usb-config %d bytes, interfaces %s' % (len(cfg), ' '.join(itfs))]
+
+    def dfu_dnload(self, image):
+        """NI's updater's download: 64-byte blocks, GETSTATUS after each, a zero-length block,
+        GETSTATUS; (DFU status, state)."""
+        h = self.b.host
+        st = None
+        for k, o in enumerate(range(0, len(image), 64)):
+            if h.control(0x21, 1, k & 0xFFFF, 0, len(image[o:o + 64]), image[o:o + 64]) is None:
+                return ('stall', k)
+            st = h.control(0xA1, 3, 0, 0, 6)
+            if not st or st[0]:
+                return (st[0] if st else 'stall', st[4] if st else k)
+        h.control(0x21, 1, 0, 0, 0)
+        st = h.control(0xA1, 3, 0, 0, 6, ms=2000)
+        return (st[0], st[4]) if st else ('stall', -1)
+
+    def dfu_upload(self):
+        h, data = self.b.host, b''
+        for k in range(0x1000):
+            d = h.control(0xA1, 2, k, 0, 64)
+            if d is None:
+                break
+            data += d
+            if len(d) < 64:
+                break
+        return data
+
     # -- output
     def midi_out(self):
         """New MIDI since the last call: ['din-out ..', 'out <cable> ..']"""
@@ -215,6 +301,8 @@ class Harness:
             b.din_out.flush(b.sys.now)
             din = [x for _, x, _ in b.din_out.bytes[self.din_seen:]]
             self.din_seen = len(b.din_out.bytes)
+        lines += self.usb_lines
+        self.usb_lines = []
         if din:
             lines.insert(0, 'din-out ' + ' '.join('%02X' % x for x in din))
         return lines
@@ -341,6 +429,24 @@ class Harness:
             elif cmd == 'power':
                 self.stopped = None
                 self.power_on(self.b)
+            elif cmd in ('usb-enum', 'usb-out', 'usb-ctl', 'dfu-dnload', 'dfu-upload'):
+                if not self.b.host:
+                    return ['error: `%s` needs our tile 1 image and its map (--map1)' % cmd]
+                if cmd == 'usb-enum':
+                    return self.usb_enum()
+                if cmd == 'usb-out':
+                    return [] if self.b.host.bulk_out(0x01, bytes.fromhex(''.join(args))) else ['usb-out refused']
+                if cmd == 'usb-ctl':
+                    v = [int(x, 16) for x in args[:5]]
+                    r = self.b.host.control(*v, data=bytes.fromhex(''.join(args[5:])))
+                    return ['usb-ctl stall' if r is None else 'usb-ctl ok %s' % r.hex(' ').upper()]
+                if cmd == 'dfu-dnload':
+                    st, state = self.dfu_dnload(open(args[0], 'rb').read())
+                    return ['dfu-dnload status %s state %s' % (st, state)]
+                data = self.dfu_upload()
+                if len(args) > 0:
+                    open(args[0], 'wb').write(data)
+                return ['dfu-upload %d bytes' % len(data)]
             elif cmd == 'hang':
                 tl = self.b.ui
                 t = tl.threads[0]
@@ -351,6 +457,12 @@ class Harness:
                 mem = self.b.flash.mem if self.b.flash else self.b.link.flash
                 a, data = int(args[0], 16), bytes.fromhex(''.join(args[1:]))
                 mem[a:a + len(data)] = data
+            elif cmd == 'flash-layout':
+                if not self.b.flash:
+                    return ['error: `flash-layout` needs our tile 1 image']
+                up = open(args[0], 'rb').read() if args else None
+                lo, hi = self.b.flash.xmos_layout(up)
+                return ['flash-layout slot %05X-%05X' % (lo, hi)]
             elif cmd == 'flash':
                 a, n = int(args[0], 16), int(args[1]) if len(args) > 1 else 16
                 mem = self.b.flash.mem if self.b.flash else self.b.link.flash

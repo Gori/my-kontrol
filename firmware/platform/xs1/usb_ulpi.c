@@ -13,14 +13,13 @@
 
 #if defined(__xcore__)
 
-/* ---- XS1 control-token values (XS1 architecture manual, "setc"). VERIFY. ---- */
+/* ---- XS1 setc values (as in xs1.h: mode << 3 | 7, or 8 for INUSE_ON) ---- */
 #define SC_ENABLE        0x0008u   /* INUSE_ON: claim the resource            */
-#define SC_BUF           0x2008u   /* BUF_BUFFERS: buffered port              */
-#define SC_MASTER        0x1008u   /* MS_MASTER                               */
-#define SC_RDY_HANDSHAKE 0x3010u   /* RDY_HANDSHAKE: port gated by ready-in   */
-#define SC_PORT_CLOCK    0x5008u   /* PORT_CLOCKPORT: use port as clock input */
+#define SC_BUF           0x200Fu   /* BUF_BUFFERS: buffered port              */
+#define SC_RDY_HANDSHAKE 0x3017u   /* RDY_HANDSHAKE: port gated by ready-in   */
+#define SC_PORT_CLOCK    0x500Fu   /* PORT_CLOCKPORT: use port as clock input */
 #define SC_EVENT         0x0002u   /* IE_MODE_EVENT                           */
-#define CT_END           0x01u     /* channel END control token               */
+#define SC_START         0x000Fu   /* RUN_STARTR: start a clock block         */
 
 /* ---- resource primitives (one inline-asm op each) ---- */
 static inline void r_setc(uint32_t r, uint32_t v)   { asm volatile("setc res[%0], %1"  :: "r"(r), "r"(v) : "memory"); }
@@ -29,12 +28,8 @@ static inline void r_setrdy(uint32_t r, uint32_t s) { asm volatile("setrdy res[%
 static inline void r_settw(uint32_t r, uint32_t w)  { asm volatile("settw res[%0], %1" :: "r"(r), "r"(w) : "memory"); }
 static inline void p_out(uint32_t p, uint32_t v)    { asm volatile("out res[%0], %1"   :: "r"(p), "r"(v) : "memory"); }
 static inline uint32_t p_in(uint32_t p)             { uint32_t v; asm volatile("in %0, res[%1]"    : "=r"(v) : "r"(p) : "memory"); return v; }
-static inline void r_syncr(uint32_t r)              { asm volatile("syncr res[%0]"     :: "r"(r) : "memory"); }
 
-static inline void c_out(uint32_t c, uint32_t w)    { asm volatile("out res[%0], %1"   :: "r"(c), "r"(w) : "memory"); }
-static inline uint32_t c_in(uint32_t c)             { uint32_t w; asm volatile("in %0, res[%1]" : "=r"(w) : "r"(c) : "memory"); return w; }
-static inline void c_outct(uint32_t c, uint32_t t)  { asm volatile("outct res[%0], %1" :: "r"(c), "r"(t) : "memory"); }
-static inline void c_chkct(uint32_t c, uint32_t t)  { asm volatile("chkct res[%0], %1" :: "r"(c), "r"(t) : "memory"); }
+static inline uint32_t c_int(uint32_t c)            { uint32_t t; asm volatile("int %0, res[%1]" : "=r"(t) : "r"(c) : "memory"); return t; }
 
 /* The data bus is turned by claiming/releasing drive. On a shared 8-bit port,
    output drive is active after out; reading needs drive released first. The
@@ -97,7 +92,7 @@ static void ports_init(void)
     r_setrdy(ULPI_PORT_DATA, ULPI_PORT_NXT);
     r_setc(ULPI_PORT_DATA, SC_RDY_HANDSHAKE);
 
-    r_syncr(ULPI_CLKBLK);                      /* start the clock block */
+    r_setc(ULPI_CLKBLK, SC_START);             /* start the clock block */
 }
 
 uint8_t usb_ulpi_phy_bringup(void)
@@ -145,15 +140,15 @@ static uint32_t     g_chan;
 
 static void ev_setup(void *u, const uint8_t s[8])
 {
-    uint32_t c = g_chan; (void)u;
+    (void)u;
     uint32_t a = s[0] | s[1]<<8 | s[2]<<16 | (uint32_t)s[3]<<24;
     uint32_t b = s[4] | s[5]<<8 | s[6]<<16 | (uint32_t)s[7]<<24;
-    c_out(c, ULPI_EVT_SETUP); c_out(c, a); c_out(c, b); c_out(c, 0); c_outct(c, CT_END);
+    ulpi_put(&ulpi_evq, g_chan, ULPI_EVT_SETUP, a, b, 0);
 }
 static void ev_complete(void *u, uint8_t ep, uint16_t len)
 {
-    uint32_t c = g_chan; (void)u;
-    c_out(c, ULPI_EVT_COMPLETE); c_out(c, ep); c_out(c, len); c_out(c, 0); c_outct(c, CT_END);
+    (void)u;
+    ulpi_put(&ulpi_evq, g_chan, ULPI_EVT_COMPLETE, ep, len, 0);
 }
 static void ev_address(void *u, uint8_t addr) { (void)u; (void)addr; /* filter already updated in g_ep */ }
 
@@ -241,9 +236,11 @@ void usb_ulpi_sie_thread(uint32_t chan)
 
     for (;;) {
         if (wait_event(chan, ULPI_PORT_DIR) == 0) {
-            uint32_t tag = c_in(chan), a = c_in(chan), b = c_in(chan), cc = c_in(chan);
-            c_chkct(chan, CT_END);
-            apply_cmd(tag, a, b, cc);
+            ulpi_msg_t m;
+            (void)c_int(chan);
+            ulpi_cmdq.bell = 0;
+            while (ulpi_get(&ulpi_cmdq, &m))
+                apply_cmd(m.tag, m.a, m.b, m.c);
         } else {
             service_wire();
         }

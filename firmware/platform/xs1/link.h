@@ -23,8 +23,12 @@ enum {
     LINK_FLASH_READ = 0x83,    /* u32 address, u8 length       -> FLASH_DATA */
     LINK_FLASH_ERASE = 0x84,   /* u32 address (4 KB sector)    -> FLASH_DONE */
     LINK_FLASH_WRITE = 0x85,   /* u32 address, data (one page) -> FLASH_DONE */
+    LINK_KBD_TAP = 0x86,       /* u8 modifier, u8 key: a press and release on the USB keyboard */
+    LINK_SYSTEM = 0x87,        /* u8 LINK_SYS_*                */
     /* tile 1 -> tile 0 */
-    LINK_USB_STATE = 0x01,     /* u8 1 = configured by a host; first, then on changes */
+    LINK_USB_STATE = 0x01,     /* u8: bit 0 configured by a host, bit 1 update (DFU) mode;
+                                  first, then on changes. In update mode tile 1 sends it once
+                                  and then nothing (it needs nothing from tile 0) */
     LINK_USB_MIDI_RX = 0x02,   /* 4-byte USB-MIDI event packets from the host */
     LINK_DIN_RX = 0x03,        /* bytes from the 5-pin MIDI IN */
     LINK_FLASH_DATA = 0x04,
@@ -33,9 +37,26 @@ enum {
                                   (USB vendor request 0xB8 on the M32, tools/mktest.py) */
 };
 
+enum {
+    LINK_SYS_UPDATE = 1,       /* reboot into update mode (tile 1's DFU device); no answer */
+    LINK_SYS_FACTORY = 2,      /* remove the upgrade image so the factory image boots, then
+                                  reboot; FLASH_DONE (u8 0 = ok) first */
+};
+#define LINK_USB_MOUNTED 1
+#define LINK_USB_DFU     2
+
 /* both tiles (platform/xs1/link.c) */
 void link_send(uint32_t c, uint8_t type, const uint8_t *p, uint32_t n);
 uint8_t link_recv(uint32_t c, uint8_t *p, uint32_t *n);   /* blocks for one packet */
+/* the chip ID: a hash of NI's identity sector (flash 0x4C000, 64 bytes; read only) */
+#define LINK_ID_FLASH 0x4C000u
+void link_chip_id(const uint8_t ident[64], uint8_t out[12]);
+
+/* tile 0 (tile0_link.c): waiting for tile 1, and LINK_SYSTEM (for LINK_SYS_FACTORY: 0 = ok;
+   tile 1 then reboots) */
+void tile0_link_wait(void);
+int tile0_link_is_up(void);
+int tile0_system(uint8_t cmd);
 
 /* tile 0 (tile0_link.c): the raw SPI flash, by flash address; tile 1 refuses any change
    below 0x55000 (NI's data). 0 = ok. */

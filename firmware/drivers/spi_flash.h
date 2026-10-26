@@ -8,11 +8,17 @@
      and must stay untouched so NI's firmware gives back the keyboard as it was;
    - the status register's protection bits (NI leaves them set) are cleared before an erase
      or a write and put back afterwards.
+   - the one exception: the upgrade image slot (platform/xs1/upgrade.c), through the _image
+     calls only, inside a window [lo, hi) that itself must lie within
+     [SPI_FLASH_IMAGE_FLOOR, SPI_FLASH_IMAGE_CEIL): above the boot loader and NI's factory
+     image, below NI's identity data at 0x4C000.
    The board passes the bus: chip select and one byte each way. Host-tested (test_flash.c). */
 #include <stdint.h>
 
 #define SPI_FLASH_SIZE           0x100000u
 #define SPI_FLASH_FIRST_WRITABLE 0x55000u
+#define SPI_FLASH_IMAGE_FLOOR    0x10000u
+#define SPI_FLASH_IMAGE_CEIL     0x4C000u
 
 enum { SPI_FLASH_NONE, SPI_FLASH_AT25DF081A, SPI_FLASH_MX25L8006E };
 
@@ -27,3 +33,7 @@ void spi_flash_read(const spi_bus_t *bus, uint32_t addr, uint8_t *buf, uint32_t 
 /* 0 = done; -1 = refused (protected range or out of the chip), -2 = no or unknown chip */
 int spi_flash_erase(const spi_bus_t *bus, int chip, uint32_t addr);        /* the 4 KB sector */
 int spi_flash_write(const spi_bus_t *bus, int chip, uint32_t addr, const uint8_t *p, uint32_t n);
+/* the upgrade slot only: [lo, hi) inside [SPI_FLASH_IMAGE_FLOOR, SPI_FLASH_IMAGE_CEIL) */
+int spi_flash_erase_image(const spi_bus_t *bus, int chip, uint32_t addr, uint32_t lo, uint32_t hi);
+int spi_flash_write_image(const spi_bus_t *bus, int chip, uint32_t addr, const uint8_t *p, uint32_t n,
+                          uint32_t lo, uint32_t hi);

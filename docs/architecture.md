@@ -128,8 +128,20 @@ Implemented (platform/xs1, boards/s-mk1):
   mirror written through to SPI flash on tile 1.
 - Tile 1 (`tile1.c`): the link, the 5-pin UART (TX and RX threads) and the SPI flash
   (`drivers/spi_flash.c`: AT25DF081A or MX25L8006E by JEDEC ID, the protection bits cleared
-  for each change and set again, nothing below 0x55000 ever erased or written). USB is a
-  stub (no host).
+  for each change and set again, nothing below 0x55000 ever erased or written, except the upgrade
+  image slot in update mode). USB: TinyUSB on tile 1 over our ULPI driver
+  (`dcd_xs1_ulpi.c`, `usb_ulpi.c`) with the descriptors in `usb/usb_link.c`: MIDI with 3
+  cables (Keys, DAW, MIDI = the 5-pin port), a HID keyboard for the 4D encoder, a DFU
+  runtime interface; USB-MIDI and keyboard taps cross the tile link. The ULPI wire layer is
+  unverified and expected to need a redesign at bring-up (`platform/xs1/usb.md`, Risks);
+  everything above it runs in the emulator.
+- Update mode (`usb/dfu_xmos.c`, `tile1_dfu.c`, `upgrade.c`): XMOS RESETINTODFU / DETACH
+  (or the menu, or both page buttons at power-up) set a RAM word and reboot; tile 1 comes up
+  as a DFU-only device (PID 0x1352) that needs nothing from tile 0. DFU_DNLOAD writes the
+  upgrade image slot (after NI's factory image, below 0x4C000), every page read back, the
+  header page last after the image CRC checks; UPLOAD reads it back; REVERTFACTORY removes
+  it so NI's factory image boots. Both page buttons held 10 s at power-up do that without
+  USB.
 - System (`hal.c`, `sswitch.c`): a software watchdog (the tick thread and the main loop
   watch each other, 2 s), reboot through the switch's PLL register, a boot log in flash
   (0xF4000: 3 starts in a row that never ran 10 s stop in safe mode), update mode as a stop
@@ -144,7 +156,7 @@ Implemented (platform/xs1, boards/s-mk1):
   button and strip light bits; touch nodes; knob resolution.
 - `make BOARD=s49` builds both tile images (`build/s49/tile0.bin`, `tile1.bin`);
   `tools/xcore/s49run.py` runs them on the board emulator; `xtest.py standalone` plays a
-  whole standalone session on it (everything but USB).
+  whole standalone session on it, `xtest.py usb` the USB device above the wire.
 
 ## Tests
 

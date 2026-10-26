@@ -1,7 +1,8 @@
 /* TinyUSB device controller driver (dcd_*) for the XS1 ULPI link.
    Clean-room: implements the interface in firmware/lib/tinyusb/src/device/dcd.h
-   over the SIE thread in usb_ulpi.c. No ISR: the SIE posts events on a channel
-   and this file (running in the TinyUSB thread) pumps them into the stack.
+   over the SIE thread in usb_ulpi.c. No ISR: the SIE posts events in a shared queue and
+   rings a one-token bell (usb_ulpi.h); this file, in the TinyUSB thread, pumps them into
+   the stack, and posts commands the same way.
 
    Select this DCD by building the XS1 board with CFG_TUSB_MCU = OPT_MCU_NONE so
    TinyUSB links these symbols instead of a built-in controller driver. */
@@ -12,20 +13,40 @@
 #include "device/dcd.h"
 #include "usb_ulpi.h"
 
-#define CT_END 0x01u    /* channel END control token */
-
 #if defined(__xcore__)
-static inline void c_out(uint32_t c, uint32_t w)   { asm volatile("out res[%0], %1"   :: "r"(c), "r"(w) : "memory"); }
-static inline uint32_t c_in(uint32_t c)            { uint32_t w; asm volatile("in %0, res[%1]" : "=r"(w) : "r"(c) : "memory"); return w; }
-static inline void c_outct(uint32_t c, uint32_t t) { asm volatile("outct res[%0], %1" :: "r"(c), "r"(t) : "memory"); }
-static inline void c_chkct(uint32_t c, uint32_t t) { asm volatile("chkct res[%0], %1" :: "r"(c), "r"(t) : "memory"); }
+static inline void c_outt(uint32_t c, uint32_t t) { asm volatile("outt res[%0], %1" :: "r"(c), "r"(t) : "memory"); }
+static inline uint32_t c_int(uint32_t c)           { uint32_t t; asm volatile("int %0, res[%1]" : "=r"(t) : "r"(c) : "memory"); return t; }
 #else
-/* Host builds of this file (compile check only): the channel is a no-op. */
-static inline void c_out(uint32_t c, uint32_t w)   { (void)c; (void)w; }
-static inline uint32_t c_in(uint32_t c)            { (void)c; return 0; }
-static inline void c_outct(uint32_t c, uint32_t t) { (void)c; (void)t; }
-static inline void c_chkct(uint32_t c, uint32_t t) { (void)c; (void)t; }
+/* Host builds of this file (compile check only): no channel. */
+static inline void c_outt(uint32_t c, uint32_t t) { (void)c; (void)t; }
+static inline uint32_t c_int(uint32_t c)           { (void)c; return 0; }
 #endif
+
+ulpi_queue_t ulpi_cmdq, ulpi_evq;
+
+void ulpi_put(ulpi_queue_t *q, uint32_t chan, uint32_t tag, uint32_t a, uint32_t b, uint32_t c)
+{
+    uint32_t h = q->head;
+    while (h - q->tail >= ULPI_QUEUE) { }      /* full: the consumer never waits for us */
+    volatile ulpi_msg_t *m = &q->m[h % ULPI_QUEUE];
+    m->tag = tag, m->a = a, m->b = b, m->c = c;
+    q->head = h + 1;
+    if (!q->bell) {
+        q->bell = 1;
+        c_outt(chan, 0);
+    }
+}
+
+int ulpi_get(ulpi_queue_t *q, ulpi_msg_t *out)
+{
+    uint32_t t = q->tail;
+    if (t == q->head)
+        return 0;
+    volatile ulpi_msg_t *m = &q->m[t % ULPI_QUEUE];
+    out->tag = m->tag, out->a = m->a, out->b = m->b, out->c = m->c;
+    q->tail = t + 1;
+    return 1;
+}
 
 static uint32_t s_chan;
 
@@ -33,8 +54,7 @@ void usb_dcd_bind_channel(uint32_t chan) { s_chan = chan; }
 
 static void send_cmd(uint32_t tag, uint32_t a, uint32_t b, uint32_t cc)
 {
-    uint32_t c = s_chan;
-    c_out(c, tag); c_out(c, a); c_out(c, b); c_out(c, cc); c_outct(c, CT_END);
+    ulpi_put(&ulpi_cmdq, s_chan, tag, a, b, cc);
 }
 
 //--------------------------------------------------------------------+
@@ -63,33 +83,33 @@ void dcd_connect(uint8_t rhport)       { (void)rhport; }
 void dcd_disconnect(uint8_t rhport)    { (void)rhport; }
 void dcd_sof_enable(uint8_t rhport, bool en) { (void)rhport; (void)en; }
 
-/* Pump one SIE event into the stack. Called by the TinyUSB thread; dcd_int_handler
-   forwards to it so tud_int_handler() works too. */
+/* Take the bell token and pump every queued SIE event into the stack (TinyUSB thread). */
 void usb_dcd_pump(void)
 {
-    uint32_t c = s_chan;
-    uint32_t tag = c_in(c), a = c_in(c), b = c_in(c), cc = c_in(c);
-    c_chkct(c, CT_END);
-    (void)cc;
-    switch (tag) {
-    case ULPI_EVT_SETUP: {
-        uint8_t s[8];
-        s[0]=a; s[1]=a>>8; s[2]=a>>16; s[3]=a>>24;
-        s[4]=b; s[5]=b>>8; s[6]=b>>16; s[7]=b>>24;
-        dcd_event_setup_received(0, s, false);
-        break;
-    }
-    case ULPI_EVT_COMPLETE:
-        dcd_event_xfer_complete(0, (uint8_t)a, b, XFER_RESULT_SUCCESS, false);
-        break;
-    case ULPI_EVT_RESET:
-        dcd_event_bus_reset(0, (tusb_speed_t)a, false);
-        break;
-    case ULPI_EVT_SOF:
-        dcd_event_sof(0, a, false);
-        break;
-    default:
-        break;
+    ulpi_msg_t m;
+    (void)c_int(s_chan);
+    ulpi_evq.bell = 0;
+    while (ulpi_get(&ulpi_evq, &m)) {
+        switch (m.tag) {
+        case ULPI_EVT_SETUP: {
+            uint8_t s[8];
+            s[0]=m.a; s[1]=m.a>>8; s[2]=m.a>>16; s[3]=m.a>>24;
+            s[4]=m.b; s[5]=m.b>>8; s[6]=m.b>>16; s[7]=m.b>>24;
+            dcd_event_setup_received(0, s, false);
+            break;
+        }
+        case ULPI_EVT_COMPLETE:
+            dcd_event_xfer_complete(0, (uint8_t)m.a, m.b, XFER_RESULT_SUCCESS, false);
+            break;
+        case ULPI_EVT_RESET:
+            dcd_event_bus_reset(0, (tusb_speed_t)m.a, false);
+            break;
+        case ULPI_EVT_SOF:
+            dcd_event_sof(0, m.a, false);
+            break;
+        default:
+            break;
+        }
     }
 }
 

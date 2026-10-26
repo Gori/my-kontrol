@@ -33,7 +33,7 @@
 
 static uint8_t level_a[80], level_b[80], level_c[112];
 static uint8_t backlight = 127;
-static uint32_t ab_stack[64], c_stack[64];
+static uint32_t ab_stack[48], c_stack[44];   /* 92 / 84 bytes used at most (emulator) */
 
 static const uint8_t group[24] = {6, 7, 5, 3, 4, 2, 0, 1, 15, 13, 14, 12, 10, 11, 9, 23, 8, 22,
                                   20, 21, 19, 17, 18, 16};

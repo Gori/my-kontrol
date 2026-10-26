@@ -543,6 +543,7 @@ class SpiFlash:
             self.mem[a] = a * 7 & 0xFF
         self.sr, self.wel = 0x0C, False
         self.refused = self.violations = 0
+        self.window = (0, 0)                 # the upgrade slot (xmos_layout): changes allowed
         self.sel, self.clk_v, self.mosi_v = False, 0, 0
         self.cmd, self.nbit, self.byte, self.outq = [], 0, 0, []
         self.log = []
@@ -586,13 +587,13 @@ class SpiFlash:
                 self.refused += 1
             elif c[0] == 0x20:
                 a &= ~4095
-                if a < self.PROTECTED_END:
+                if a < self.PROTECTED_END and not self.window[0] <= a < self.window[1]:
                     self.violations += 1
                 self.mem[a:a + 4096] = b'\xff' * 4096
             else:
                 for i, x in enumerate(c[4:]):
                     k = a & ~255 | (a + i) & 255
-                    if k < self.PROTECTED_END:
+                    if k < self.PROTECTED_END and not self.window[0] <= k < self.window[1]:
                         self.violations += 1
                     self.mem[k] &= x
             self.wel = False
@@ -611,6 +612,28 @@ class SpiFlash:
             a = (c[1] << 16 | c[2] << 8 | c[3]) + len(c) - (5 if c[0] == 0x0B else 4)
             self.queue(bytes(self.mem[a:a + 256]))
 
+    def xmos_layout(self, upgrade=None):
+        """Give the flash an XMOS boot layout like the S49's (fw notes xmos.md section 13), from
+        our own test bytes: a boot loader whose word 0 is its size n (factory image at 4n + 8 =
+        0x1000), a factory image built by ximage (two segments, about 80 KB), the upgrade image
+        bytes `upgrade` (if given) in the sector after it. Sets .window to the upgrade slot the
+        firmware must use (platform/xs1/upgrade.c): changes there are not violations."""
+        n = 0x3FE
+        self.mem[0:4] = struct.pack('<I', n).translate(ximage.REV8)
+        for i in range(4, 4 * n + 8):
+            self.mem[i] = i * 3 & 0xFF
+        seg = lambda size, k: bytes((0x11 + i * 13 + k) & 0xFF for i in range(size))
+        fac = ximage.build([seg(0xB000, 0), seg(0x9000, 1)], ident=0x12345678)
+        self.mem[0x1000:0x1000 + len(fac)] = fac
+        lo = 0x1000 + len(fac) + 4095 & ~4095
+        if upgrade:
+            self.mem[lo:lo + len(upgrade)] = upgrade
+            self.window = (lo, min(lo + 0x20000, 0x4C000))
+        else:
+            lo = lo + 0xFFFF & ~0xFFFF
+            self.window = (lo, min(lo + 0x20000, 0x4C000))
+        return self.window
+
     def queue(self, data):
         for b in data:
             self.outq += [b >> (7 - i) & 1 for i in range(8)]
@@ -624,8 +647,7 @@ class HostLink:
 
     Link contract (what our tile 0 and tile 1 firmware exchange; the real tile 1 must match):
     - Each tile allocates its link chanend first in main, so it is chanend 0 of its node:
-      LINK_TILE0 = 0x80000002
-    PROTECTED_END = 0x55000                  # below: NI's data, never erased or written, LINK_TILE1 = 0x00000002 with NI's node numbering (tile 0 is node
+      LINK_TILE0 = 0x80000002, LINK_TILE1 = 0x00000002 with NI's node numbering (tile 0 is node
       0x8000, tile 1 node 0x0000); link-time constants on both sides. Each setd's its link
       chanend to the other's.
     - Tile 1 speaks first: USB_STATE once it is up (at least 1 ms after boot, so tile 0 has
@@ -641,8 +663,12 @@ class HostLink:
       0x83 FLASH_READ   u32 address, u8 length          -> FLASH_DATA
       0x84 FLASH_ERASE  u32 address (4 KB sector)       -> FLASH_DONE
       0x85 FLASH_WRITE  u32 address, data (in one page) -> FLASH_DONE
+      0x86 KBD_TAP      u8 modifier, u8 key: one press and release on the USB keyboard
+      0x87 SYSTEM       u8 1 = reboot into update mode, 2 = remove the upgrade image (FLASH_DONE)
+                        and reboot into the factory image
     tile 1 -> tile 0:
-      0x01 USB_STATE    u8 1 = configured by a host, 0 = no host; sent first and on changes
+      0x01 USB_STATE    u8 bit 0 = configured by a host, bit 1 = update mode (sent once, then
+                        nothing); sent first and on changes
       0x02 USB_MIDI_RX  4-byte USB-MIDI event packets from the host
       0x03 DIN_RX       raw bytes from the 5-pin MIDI IN
       0x04 FLASH_DATA   bytes read
@@ -763,6 +789,191 @@ class HostLink:
         return self.send(self.USB_MIDI_RX, pkt)
 
 
+class UsbHost:
+    """A USB host at the level where our SIE thread (firmware usb_ulpi.c) hands transactions
+    to TinyUSB: the thread is replaced by this model when it starts (a hook on
+    usb_ulpi_sie_thread), which takes the DCD's commands from ulpi_cmdq and answers in
+    ulpi_evq with one-token bells, exactly as the SIE does (usb_ulpi.h). So everything above
+    the wire runs as built for tile 1: the DCD, TinyUSB, our descriptors, MIDI, HID, DFU and
+    the flash writes. The wire itself (ULPI, the PHY, timing) is not modelled.
+
+    run(ms) advances the board; control() / bulk_out() / bulk_in() run it until the device
+    has answered (or a time limit)."""
+    QSIZE, Q_HEAD, Q_TAIL, Q_BELL = 16, 256, 260, 264
+    CMD_OPEN, CMD_XFER, CMD_STALL, CMD_CLR_STALL, CMD_SET_ADDR, CMD_CLOSE_ALL = 1, 2, 3, 4, 5, 6
+    EVT_SETUP, EVT_COMPLETE, EVT_RESET = 0x40, 0x41, 0x42
+
+    def __init__(self, board, tile, syms):
+        self.b, self.tile = board, tile
+        self.cmdq, self.evq = syms['ulpi_cmdq'], syms['ulpi_evq']
+        self.park = syms['_exit']
+        tile.hooks[syms['usb_ulpi_sie_thread']] = self.sie_start
+        self.sie = None
+        self.xfer = {}                      # ep -> (address, length) queued by the device
+        self.stalled = set()
+        self.address = 0
+        self.log = []
+
+    # -- tile RAM
+    def rd32(self, a):
+        return struct.unpack_from('<I', self.tile.ram, a - self.tile.base)[0]
+
+    def wr32(self, a, v):
+        struct.pack_into('<I', self.tile.ram, a - self.tile.base, v & 0xFFFFFFFF)
+
+    def rd(self, a, n):
+        return bytes(self.tile.ram[a - self.tile.base:a - self.tile.base + n])
+
+    def wr(self, a, data):
+        self.tile.ram[a - self.tile.base:a - self.tile.base + len(data)] = data
+
+    # -- the SIE side
+    def sie_start(self, t):
+        self.sie = self.tile.sys.chanend(t.R[0])
+        self.dcd = self.sie.dest_id
+        self.sie.sink = self.bell
+        return self.park                    # the thread waits for good
+
+    def bell(self, d, now):
+        d.pop(len(d.buf), now)
+        q = self.cmdq
+        self.wr32(q + self.Q_BELL, 0)
+        while self.rd32(q + self.Q_TAIL) != self.rd32(q + self.Q_HEAD):
+            tail = self.rd32(q + self.Q_TAIL)
+            tag, a, b, c = struct.unpack_from('<4I', self.tile.ram, q + 16 * (tail % self.QSIZE) - self.tile.base)
+            self.wr32(q + self.Q_TAIL, tail + 1)
+            self.command(tag, a, b, c)
+
+    def command(self, tag, a, b, c):
+        if tag == self.CMD_XFER:
+            self.xfer[a] = (b, c)
+            self.stalled.discard(a)
+        elif tag == self.CMD_STALL:
+            self.stalled.add(a)
+            self.xfer.pop(a, None)
+        elif tag == self.CMD_CLR_STALL:
+            self.stalled.discard(a)
+        elif tag == self.CMD_SET_ADDR:
+            self.address = a
+            self.xfer[0x80] = (0, 0)        # the SIE sends the status ZLP itself
+        elif tag == self.CMD_CLOSE_ALL:
+            for ep in [e for e in self.xfer if e & 0x7F]:
+                del self.xfer[ep]
+
+    def event(self, tag, a=0, b=0, c=0):
+        q = self.evq
+        head = self.rd32(q + self.Q_HEAD)
+        if head - self.rd32(q + self.Q_TAIL) >= self.QSIZE:
+            raise RuntimeError('USB event queue full')
+        struct.pack_into('<4I', self.tile.ram, q + 16 * (head % self.QSIZE) - self.tile.base, tag, a, b, c)
+        self.wr32(q + self.Q_HEAD, head + 1)
+        if not self.rd32(q + self.Q_BELL):
+            self.wr32(q + self.Q_BELL, 1)
+            d = self.tile.sys.chanend(self.dcd)
+            d.buf.append((0, False))
+            d.notify(self.tile.sys.now)
+
+    # -- the host side
+    def up(self):
+        return self.sie is not None
+
+    def wait(self, cond, ms=50.0):
+        """Run the board until cond() or ms pass; False on a time limit or a stop."""
+        sys_ = self.b.sys
+        tick = 1e5 * sys_.cpt                # cycles per ms
+        end = sys_.now + ms * tick
+        while not cond():
+            if sys_.now >= end - 1:
+                return False
+            if sys_.run(until=min(end, sys_.now + 0.05 * tick)) != 'time limit':
+                return False
+        return True
+
+    def reset(self):
+        self.xfer.clear()
+        self.stalled.clear()
+        self.address = 0
+        self.event(self.EVT_RESET, 0)       # TUSB_SPEED_FULL
+        self.wait(lambda: False, 1.0)
+
+    def _complete(self, ep, n):
+        self.xfer.pop(ep, None)
+        self.event(self.EVT_COMPLETE, ep, n)
+
+    def control(self, rtype, req, value=0, index=0, length=0, data=b'', ms=200.0):
+        """One control transfer: (bytes for IN, b'' for OUT) or None if stalled / no answer."""
+        setup = struct.pack('<BBHHH', rtype, req, value, index, length)
+        self.stalled.discard(0x00), self.stalled.discard(0x80)
+        self.xfer.pop(0x00, None), self.xfer.pop(0x80, None)
+        a, b = struct.unpack('<II', setup)
+        self.event(self.EVT_SETUP, a, b)
+        stall = lambda: 0x00 in self.stalled or 0x80 in self.stalled
+        got = b''
+        if length and rtype & 0x80:
+            while True:
+                if not self.wait(lambda: 0x80 in self.xfer or stall(), ms) or stall():
+                    return None
+                addr, n = self.xfer[0x80]
+                got += self.rd(addr, n) if n else b''
+                self._complete(0x80, n)
+                if n < 64 or len(got) >= length:
+                    break
+            if not self.wait(lambda: 0x00 in self.xfer or stall(), ms) or stall():
+                return None
+            self._complete(0x00, 0)
+        else:
+            sent = 0
+            while sent < length:
+                if not self.wait(lambda: 0x00 in self.xfer or stall(), ms) or stall():
+                    return None
+                addr, n = self.xfer[0x00]
+                k = min(n, length - sent)
+                self.wr(addr, data[sent:sent + k])
+                sent += k
+                self._complete(0x00, k)
+            if not self.wait(lambda: 0x80 in self.xfer or stall(), ms) or stall():
+                return None
+            self._complete(0x80, 0)
+        self.wait(lambda: False, 0.05)       # the stack takes the status stage
+        return got
+
+    def bulk_out(self, ep, data, ms=50.0):
+        if not self.wait(lambda: ep in self.xfer, ms):
+            return False
+        addr, n = self.xfer[ep]
+        self.wr(addr, data[:n])
+        self._complete(ep, min(n, len(data)))
+        return True
+
+    def bulk_in(self, ep):
+        """What the device has queued on IN endpoint ep, b'' if nothing."""
+        if ep not in self.xfer:
+            return b''
+        addr, n = self.xfer[ep]
+        data = self.rd(addr, n)
+        self._complete(ep, n)
+        return data
+
+    def enumerate(self):
+        """Reset, device descriptor, address, configuration (all of it), SET_CONFIGURATION;
+        returns (device descriptor, configuration) or None."""
+        self.reset()
+        dev = self.control(0x80, 6, 0x0100, 0, 64)
+        if not dev or self.control(0x00, 5, 7) is None:
+            return None
+        head = self.control(0x80, 6, 0x0200, 0, 9)
+        if not head:
+            return None
+        cfg = self.control(0x80, 6, 0x0200, 0, head[2] | head[3] << 8)
+        if not cfg or self.control(0x00, 9, 1) is None:
+            return None
+        return dev, cfg
+
+    def string(self, index):
+        s = self.control(0x80, 6, 0x0300 | index, 0x0409, 255)
+        return s[2:s[0]].decode('utf-16-le') if s else None
+
+
 class Board:
     """Both tiles and their devices. usb_img None: tile 1 is the HostLink stub."""
 
@@ -785,13 +996,14 @@ class Board:
         self.keybed = UartTx(s, ui.port('1K'))
         if usb_img is None:
             self.link, self.usb = HostLink(s), None
-            self.din_in = self.din_out = self.flash = None
+            self.din_in = self.din_out = self.flash = self.host = None
             return
         self.link = None
         self.usb = usb = s.tile('usb', 0x0000, usb_img, usb_syms)
         self.din_in = UartTx(s, usb.port('1L'))
         self.din_out = UartRx(s, usb.port('1J'), 'DIN OUT')
         self.flash = SpiFlash(usb)
+        self.host = UsbHost(self, usb, usb_syms) if usb_syms and 'usb_ulpi_sie_thread' in usb_syms else None
 
     def touch_frame(self):
         return struct.pack('<H48hBB', self.pedal, *self.touch, self.switches, 0)

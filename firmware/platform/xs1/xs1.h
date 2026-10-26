@@ -111,6 +111,36 @@ static inline int xs1_wait2(uint32_t a, uint32_t b)
     return r;
 }
 
+/* wait until chanend a, b or c has a token: 0, 1 or 2 */
+static inline int xs1_wait3(uint32_t a, uint32_t b, uint32_t c)
+{
+    int r;
+    asm volatile(
+        "clre\n"
+        "ldap r11, .Lw3a%=\n"
+        "setv res[%1], r11\n"
+        "eeu res[%1]\n"
+        "ldap r11, .Lw3b%=\n"
+        "setv res[%2], r11\n"
+        "eeu res[%2]\n"
+        "ldap r11, .Lw3c%=\n"
+        "setv res[%3], r11\n"
+        "eeu res[%3]\n"
+        "waiteu\n"
+        ".Lw3a%=:\n"
+        "ldc %0, 0\n"
+        "bu .Lw3d%=\n"
+        ".Lw3b%=:\n"
+        "ldc %0, 1\n"
+        "bu .Lw3d%=\n"
+        ".Lw3c%=:\n"
+        "ldc %0, 2\n"
+        ".Lw3d%=:\n"
+        "clre\n"
+        : "=&r"(r) : "r"(a), "r"(b), "r"(c) : "r11", "memory");
+    return r;
+}
+
 /* wait until chanend c has a token or timer tmr passes t: 0 = chanend, 1 = time */
 static inline int xs1_wait_chan_until(uint32_t c, uint32_t tmr, uint32_t t)
 {

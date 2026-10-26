@@ -18,6 +18,8 @@
 /* USB identity (NI's VID/PID, so NI's updater and the web installer find it) */
 #define BOARD_USB_VID    0x17CC
 #define BOARD_USB_PID    0x1350
+#define BOARD_USB_PID_DFU 0x1352 /* update mode (tile 1's DFU device), as NI's */
+#define BOARD_USB_NAME   "S49"   /* product string "My Kontrol S49" (usb/usb_link.c) */
 
 /* Settings flash: 4 pages of 1 KB in a RAM mirror (platform/xs1/tile0_link.c), each page
    stored at the start of a 4 KB sector of the SPI flash from BOARD_SPI_SETTINGS (clear of

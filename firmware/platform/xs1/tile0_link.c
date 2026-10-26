@@ -1,6 +1,6 @@
 /* XS1 tile 0: the core's USB and 5-pin MIDI over the tile link (link.h), in place of
-   usb/usb_device.c and TinyUSB, which run on tile 1. Also the settings flash, a RAM mirror of
-   the SPI flash pages that tile 1 reads and writes.
+   usb/usb_device.c; TinyUSB runs on tile 1 (usb/usb_link.c). Also the settings flash, a RAM
+   mirror of the SPI flash pages that tile 1 reads and writes, and update mode.
 
    usb_task() (main loop) takes what tile 1 sent: USB_STATE -> app_usb_mounted(),
    USB_MIDI_RX -> midi_rx_packet(), DIN_RX -> midi_din_rx_byte(); and sends the core's
@@ -16,6 +16,7 @@
 #include "xs1.h"
 
 void xs1_link_up(void);
+void xs1_update_mode(void) __attribute__((noreturn));
 
 static uint32_t link;
 static uint8_t up, mounted;
@@ -36,8 +37,10 @@ static void handle(uint8_t type, const uint8_t *p, uint32_t n)
     switch (type) {
     case LINK_USB_STATE:
         up = 1;
-        if (n && (p[0] & 1) != mounted) {
-            mounted = p[0] & 1;
+        if (n && (p[0] & LINK_USB_DFU))
+            xs1_update_mode();      /* tile 1 is in update mode: stop here */
+        if (n && (p[0] & LINK_USB_MOUNTED) != mounted) {
+            mounted = p[0] & LINK_USB_MOUNTED;
             app_usb_mounted(mounted);
         }
         break;
@@ -160,13 +163,35 @@ int hal_flash_write(uintptr_t addr, const void *src, uint32_t len)
     return r;
 }
 
-void usb_init(void)
+/* tile 1 is up when it says USB_STATE */
+void tile0_link_wait(void)
 {
     uint32_t n;
-    while (!up) {                   /* tile 1 is up when it says USB_STATE */
+    while (!up) {
         uint8_t type = link_recv(link, pkt, &n);
         handle(type, pkt, n);
     }
+}
+
+int tile0_link_is_up(void)
+{
+    return up;
+}
+
+/* LINK_SYSTEM: update mode (tile 1 reboots, no answer) or the factory image (status) */
+int tile0_system(uint8_t cmd)
+{
+    uint8_t r = 1;
+    if (cmd == LINK_SYS_FACTORY)
+        request(LINK_SYSTEM, &cmd, 1, LINK_FLASH_DONE, &r, 1);
+    else
+        link_send(link, LINK_SYSTEM, &cmd, 1);
+    return r;
+}
+
+void usb_init(void)
+{
+    tile0_link_wait();
     flash_load();
     xs1_link_up();                  /* hal.c: the crash counter (may stop here), the ID */
     din_last_ms = hal_ms();
@@ -213,5 +238,7 @@ void hal_idle(void)
 
 void kbd_tap(uint8_t modifier, uint8_t key)
 {
-    (void)modifier, (void)key;      /* no USB keyboard until tile 1 runs USB */
+    uint8_t p[2] = {modifier, key};
+    if (mounted)
+        link_send(link, LINK_KBD_TAP, p, 2);
 }
